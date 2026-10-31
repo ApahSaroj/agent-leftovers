@@ -5,6 +5,7 @@
 // resource name can never become a command.
 const { spawnSync } = require('child_process');
 const { tokenize, flag, hasFlag } = require('./shell');
+const { k8sCheck } = require('./k8s');
 
 const READ_VERBS = new Set(['describe', 'list', 'get', 'info', 'head-bucket', 'inspect', 'status', 'exists', 'show', 'get-function', 'describe-instances', 'describe-db-instances', 'describe-table', 'apps:info']);
 const WRITE_WORDS = /^(delete|destroy|remove|rm|rb|terminate|create|deploy|stop|start|update|put|enable|disable|apply|kill|scale|launch|mb|undeploy)$|^(delete|terminate|create|put|update|remove|stop|start)-/;
@@ -49,7 +50,7 @@ function checkFor(f) {
     case 'mcp-neon-project': return f.id ? { cmd: 'neonctl', args: ['projects', 'get', f.id] } : null;
     case 'mcp-digitalocean-instance': return { cmd: 'doctl', args: ['compute', 'droplet', 'get', n] };
     case 'mcp-vercel-deployment': return f.id ? { cmd: 'vercel', args: ['inspect', f.id] } : null;
-    default: return null;
+    default: return k8sCheck(f);
   }
 }
 

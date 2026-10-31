@@ -186,5 +186,7 @@ t('odd characters in a name are never run', () => {
   assert.strictEqual(f.live, 'unknown'); assert.ok(/unusual characters/.test(f.liveNote));
 });
 
+require('./k8s-test')(t, bin, env);
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

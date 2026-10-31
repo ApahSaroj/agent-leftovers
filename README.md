@@ -32,13 +32,14 @@ Add `--verify` and it asks your own cloud CLIs which leftovers still exist (read
 | Claude Code | `~/.claude/projects/**/*.jsonl` (or `$CLAUDE_CONFIG_DIR`) |
 | Codex CLI | `~/.codex/sessions/**` and `archived_sessions` (or `$CODEX_HOME`), including compressed `.jsonl.zst` on Node 22.15+ |
 
-## What it knows how to spot (59 shell rules + MCP)
+## What it knows how to spot (59 shell rules + Kubernetes + MCP)
 
 - **Google Cloud:** VMs (GPU flagged), disks, static IPs, Cloud SQL, GKE, Memorystore, Vertex AI deployments, Cloud Run, Cloud Functions, buckets, App Engine, enabled APIs
 - **AWS:** EC2, EBS, Elastic IPs, NAT gateways, RDS, S3, Lambda, EKS/eksctl, ElastiCache, SageMaker endpoints, ECS, DynamoDB, CDK, SAM
 - **Azure:** resource groups, VMs, AKS, App Service, Container Apps, Postgres/MySQL
 - **Cloudflare:** Workers, D1, R2, KV, Queues, Pages
 - **Others:** Terraform/OpenTofu, Pulumi, Serverless, Vercel, Netlify, Railway, Heroku (+ add-ons), Supabase, Fly.io (apps, Postgres, volumes, machines), Firebase, Modal, RunPod
+- **Kubernetes (new in 0.3):** the objects that make your cloud bill you, read from the manifests behind `kubectl apply -f` (files, folders, heredocs): `Service type: LoadBalancer`, `Ingress`, `Gateway`, `PersistentVolumeClaim`. Plus `kubectl expose --type=LoadBalancer`, `kubectl create service loadbalancer`, `kubectl patch` to LoadBalancer, and `helm install` (ingress-nginx, Traefik, Kong, Istio charts flagged hourly). Local clusters (kind, minikube, k3d, Docker Desktop) are skipped. Thanks @markfenner for the idea.
 - **MCP servers (new in 0.2):** create/deploy calls to Supabase, Neon, Vercel, Cloudflare, AWS, Google Cloud, Azure, Railway, Render, Netlify, Fly.io, DigitalOcean, Heroku, PlanetScale, Upstash, Pinecone, MongoDB Atlas, Turso, Firebase, Modal, RunPod, E2B, Koyeb and Convex MCP servers, matched to their delete calls. GitHub branches, Linear projects, issues, migrations and SQL queries are ignored because they don't bill.
 - **Paid AI APIs in agent-written scripts:** OpenAI, Anthropic, Gemini/Vertex, Mistral, OpenRouter, Replicate, ElevenLabs
 
@@ -74,10 +75,10 @@ Each check times out after 20 seconds. Nothing is created, changed or deleted.
 
 ## Honest limits
 
-- It sees the agent's **shell commands and MCP tool calls**. Resources made in a web console, or by a script the agent wrote and ran, are not in the log (the paid-API script check covers the most common case).
+- It sees the agent's **shell commands and MCP tool calls**. For `kubectl apply -f`, it can only read manifests the agent wrote or piped in during the session; a manifest that was already on disk, or a remote URL, is not read. Resources made in a web console, or by a script the agent wrote and ran, are not in the log (the paid-API script check covers the most common case).
 - MCP support is pattern-based: it recognises the servers above by name and create/delete verbs in the tool name. A custom MCP server with unusual tool names may be missed; open an issue with the tool name.
 - Without `--verify` it does not know whether a resource is **still** running today. Something you deleted by hand will still show.
-- `--verify` covers the common types (VMs, disks, SQL, GKE, Cloud Run, functions, buckets, APIs, EC2 by Name tag, S3, RDS, Lambda, DynamoDB, Azure resource groups, Fly, Heroku, D1, R2, and Supabase, Neon, Vercel and DigitalOcean via MCP). Others show "no check yet".
+- `--verify` covers the common types (VMs, disks, SQL, GKE, Cloud Run, functions, buckets, APIs, EC2 by Name tag, S3, RDS, Lambda, DynamoDB, Azure resource groups, Fly, Heroku, D1, R2, Kubernetes Services/Ingress/Gateways/PVCs via `kubectl get`, Helm releases via `helm status`, and Supabase, Neon, Vercel and DigitalOcean via MCP). Others show "no check yet".
 - Names built at runtime (`test-vm-$RANDOM`) are flagged with `<NAME>` for you to fill in.
 - Always read a teardown command before running it. Bucket and resource-group deletes remove everything inside.
 

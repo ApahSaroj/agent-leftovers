@@ -70,6 +70,7 @@ function text(result, opts) {
   L.push(c.dim(result.verified ? 'Read-only: only describe/list calls were run, nothing was changed. Check each command before you run it.' : 'Read-only: nothing was run or changed. Check each command before you run it.'));
   if (result.verified) { const v = result.verified; L.push(c.dim(`--verify: ran ${v.checked} read-only check${v.checked === 1 ? '' : 's'}: ${v.exists} still exist, ${v.gone} already gone, ${v.unknown} couldn't be confirmed. ${v.skipped} had no check (no name in the log, or no check for that type yet).`)); }
   else L.push(c.dim('Read from logs only. Add --verify to ask your cloud CLIs which of these still exist.'));
+  if (result.k8sLocalSkipped) L.push(c.dim(`Skipped ${result.k8sLocalSkipped} Kubernetes object${result.k8sLocalSkipped === 1 ? '' : 's'} in local clusters (kind, minikube, k3d, Docker Desktop): they cost nothing.`));
   L.push(c.dim('Blind spots: things made in web consoles, by scripts the agent wrote, or by MCP servers we don\'t recognise.'));
   if (left.length) L.push(c.dim('Tip: agent-leftovers --script > teardown.sh  (every command commented out, you choose)'));
   return L.join('\n');

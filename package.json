@@ -1,7 +1,7 @@
 {
   "name": "agent-leftovers",
-  "version": "0.2.0",
-  "description": "See every cloud resource your AI coding agent spun up, through the shell or MCP, and the command to turn each off. Reads Claude Code and Codex logs locally. Optional read-only --verify.",
+  "version": "0.3.0",
+  "description": "See every cloud resource your AI coding agent spun up, through the shell, kubectl/helm or MCP, and the command to turn each off. Reads Claude Code and Codex logs locally. Optional read-only --verify.",
   "bin": {
     "agent-leftovers": "bin/agent-leftovers.js"
   },
@@ -28,7 +28,10 @@
     "cli",
     "mcp",
     "supabase",
-    "neon"
+    "neon",
+    "kubernetes",
+    "kubectl",
+    "helm"
   ],
   "engines": {
     "node": ">=18"

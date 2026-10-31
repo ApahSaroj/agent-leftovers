@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 (2026-10-31)
+
+Built from @markfenner's reply on X: "kubectl apply would be a sneaky one to cover. A LoadBalancer
+Service spins up a real cloud load balancer and it's easy to forget it's there."
+
+- **Kubernetes.** Reads the manifests the agent wrote (or piped in with a heredoc / `-f -`) behind
+  `kubectl apply|create|replace -f FILE|DIR|-`, and flags what makes the cloud bill you:
+  `Service` with `type: LoadBalancer`, `Ingress`, `Gateway` and `PersistentVolumeClaim` (disks).
+  Also `kubectl expose --type=LoadBalancer`, `kubectl create service loadbalancer`,
+  `kubectl create ingress`, `kubectl patch ... LoadBalancer`, and `helm install` /
+  `helm upgrade --install` (ingress-nginx, Traefik, Kong, Istio and similar charts are marked hourly).
+- Matches cleanups: `kubectl delete svc/ing/pvc NAME`, `kubectl delete -f` the same file or folder,
+  `kubectl delete namespace`, `helm uninstall`.
+- Teardown keeps the namespace and context (`kubectl delete service web-lb -n shop`).
+- Work on local clusters (kind, minikube, k3d, Docker Desktop, Rancher Desktop, OrbStack) is
+  skipped because it costs nothing; the footer says how many were skipped.
+- `--verify` checks them with `kubectl get ... -o name` and `helm status` only.
+- Tests: 113 (was 93).
+
 ## 0.2.0 (2026-10-31)
 
 Built from launch-day feedback on X and Product Hunt.

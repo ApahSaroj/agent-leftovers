@@ -3,6 +3,7 @@ const path = require('path');
 const { splitCommands, tokenize } = require('./shell');
 const { rules, matchPrefix } = require('./rules');
 const mcp = require('./mcp');
+const { k8sFindings } = require('./k8s');
 
 const LABEL = { supabase: 'Supabase', neon: 'Neon', vercel: 'Vercel', cloudflare: 'Cloudflare', aws: 'AWS', gcloud: 'Google Cloud', azure: 'Azure', railway: 'Railway', render: 'Render', netlify: 'Netlify', fly: 'Fly.io', digitalocean: 'DigitalOcean', heroku: 'Heroku', planetscale: 'PlanetScale', upstash: 'Upstash', pinecone: 'Pinecone', mongodb: 'MongoDB Atlas', turso: 'Turso', firebase: 'Firebase', modal: 'Modal', runpod: 'RunPod', e2b: 'E2B', koyeb: 'Koyeb', convex: 'Convex' };
 
@@ -130,6 +131,7 @@ function scan(events, { project } = {}) {
   }
 
   mcpFindings(evs, addFinding, found);
+  const k8s = k8sFindings(evs, addFinding, found);
 
   // Scripts the agent wrote that call a paid AI API with your key.
   const scripts = new Map();
@@ -167,7 +169,7 @@ function scan(events, { project } = {}) {
       ? `pkill -f "${path.basename(s.file)}"   # stop it, then check ${s.usage}`
       : `open ${s.usage}`,
   }));
-  return { resources, spend, scannedEvents: evs.length, mcpCalls: evs.filter((e) => e.kind === 'mcp').length };
+  return { resources, spend, scannedEvents: evs.length, mcpCalls: evs.filter((e) => e.kind === 'mcp').length, k8sLocalSkipped: k8s.skippedLocal };
 }
 
 module.exports = { scan, short };
