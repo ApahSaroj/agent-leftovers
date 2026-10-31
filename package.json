@@ -1,0 +1,38 @@
+{
+  "name": "agent-leftovers",
+  "version": "0.1.0",
+  "description": "See every cloud resource your AI coding agent spun up, and the command to turn each off. Reads Claude Code and Codex logs locally. Read-only.",
+  "bin": {
+    "agent-leftovers": "bin/agent-leftovers.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "ai-agents",
+    "cloud-costs",
+    "finops",
+    "gcloud",
+    "aws",
+    "cloudflare",
+    "vercel",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ApahSaroj/agent-leftovers.git"
+  },
+  "homepage": "https://github.com/ApahSaroj/agent-leftovers#readme"
+}
