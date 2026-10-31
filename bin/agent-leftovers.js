@@ -9,7 +9,8 @@ const HELP = `agent-leftovers ${pkg.version}
 See every cloud resource your AI coding agent spun up, and the command to turn each off.
 
 Reads the session logs Claude Code (~/.claude/projects) and Codex CLI (~/.codex/sessions)
-already keep on your machine. Read-only: runs nothing, sends nothing anywhere.
+already keep on your machine, including the MCP tool calls in them. Read-only: by
+default it runs nothing and sends nothing anywhere.
 
 Usage: npx agent-leftovers [options]
 
@@ -17,6 +18,9 @@ Usage: npx agent-leftovers [options]
   --project TEXT  only sessions whose folder contains TEXT
   --logs PATH     read this log file or folder instead (repeatable)
   --all           also show things the agent cleaned up and failed creates
+  --verify        ask your installed cloud CLIs (gcloud, aws, az, wrangler, fly,
+                  heroku, supabase, neonctl, vercel, doctl) whether each leftover still
+                  exists. Read-only describe/list calls, off by default.
   --script        print a teardown script with every line commented out
   --json          machine-readable output
   --no-color      plain text
@@ -25,7 +29,7 @@ Usage: npx agent-leftovers [options]
 `;
 
 function parseArgs(argv) {
-  const o = { days: 30, project: null, logs: [], all: false, json: false, script: false, color: !!process.env.FORCE_COLOR || (process.stdout.isTTY && !process.env.NO_COLOR) };
+  const o = { days: 30, project: null, logs: [], all: false, json: false, script: false, verify: false, color: !!process.env.FORCE_COLOR || (process.stdout.isTTY && !process.env.NO_COLOR) };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => { const v = argv[++i]; if (v === undefined) die(`${a} needs a value`); return v; };
@@ -38,6 +42,7 @@ function parseArgs(argv) {
     else if (a === '--all') o.all = true;
     else if (a === '--json') o.json = true;
     else if (a === '--script') o.script = true;
+    else if (a === '--verify') o.verify = true;
     else if (a === '--no-color') o.color = false;
     else die(`unknown option ${a}\n\n${HELP}`);
   }
@@ -61,6 +66,10 @@ function main() {
   result.files = files.length;
   result.cmdCount = events.filter((e) => e.kind === 'cmd').length;
   result.sessionCount = new Set(events.map((e) => e.session)).size;
+  if (opts.verify) {
+    if (!opts.json && !opts.script) process.stderr.write('Checking with your cloud CLIs (read-only)...\n');
+    result.verified = require('../src/verify').verify(result.resources);
+  }
 
   if (opts.json) { console.log(JSON.stringify({ version: pkg.version, days: opts.days, ...result }, null, 2)); return; }
   if (opts.script) { console.log(report.script(result)); return; }

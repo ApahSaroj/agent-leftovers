@@ -102,10 +102,14 @@ function parseClaude(file) {
           events.push({ kind: 'write', file: c.input.file_path, content: String(c.input.new_string || ''), ...base });
         } else if (name === 'MultiEdit' && c.input.file_path && Array.isArray(c.input.edits)) {
           events.push({ kind: 'write', file: c.input.file_path, content: c.input.edits.map((e) => e.new_string || '').join('\n'), ...base });
+        } else if (name.startsWith('mcp__')) {
+          const ev = { kind: 'mcp', tool_name: name, input: c.input, id: c.id, failed: false, result: null, ...base };
+          events.push(ev); if (c.id) byId.set(c.id, ev);
         }
       }
       if (c && c.type === 'tool_result' && c.tool_use_id && byId.has(c.tool_use_id)) {
         const ev = byId.get(c.tool_use_id);
+        if (ev.kind === 'mcp') { ev.result = c.content; if (c.is_error === true) ev.failed = true; continue; }
         const text = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || '');
         if (c.is_error === true || /^Exit code [1-9]/m.test(text)) ev.failed = true;
       }
@@ -151,6 +155,30 @@ function parseCodex(file) {
     if (raw.type === 'session_meta' || o._wrapType === 'session_meta') { session = o.id || o.session_id || session; cwd = o.cwd || cwd; continue; }
     if (raw.type === 'turn_context' && o.cwd) { cwd = o.cwd; continue; }
     const base = { time, session, tool: 'codex' };
+    // MCP calls as Codex logs them: event_msg mcp_tool_call_begin/end with an invocation.
+    if (o.type === 'mcp_tool_call_begin' || o.type === 'mcp_tool_call_end') {
+      const inv = o.invocation || {};
+      let ev = o.call_id && byId.get(o.call_id);
+      if (!ev && inv.server && inv.tool) {
+        let input = inv.arguments;
+        if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
+        ev = { kind: 'mcp', tool_name: `mcp__${inv.server}__${inv.tool}`, input: input || {}, id: o.call_id, failed: false, result: null, cwd, ...base };
+        events.push(ev); if (o.call_id) byId.set(o.call_id, ev);
+      }
+      if (ev && o.type === 'mcp_tool_call_end' && o.result) {
+        if (o.result.Err !== undefined) ev.failed = true;
+        else { ev.result = o.result.Ok !== undefined ? o.result.Ok : o.result; if (ev.result && ev.result.isError === true) ev.failed = true; }
+      }
+      continue;
+    }
+    if (o.type === 'function_call' && /__/.test(String(o.name || '')) && !/^(shell|exec_command|apply_patch|local_shell)$/.test(String(o.name))) {
+      let input = o.arguments;
+      if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
+      const nm = String(o.name);
+      const ev = { kind: 'mcp', tool_name: nm.startsWith('mcp__') ? nm : `mcp__${nm}`, input: input || {}, id: o.call_id, failed: false, result: null, cwd, ...base };
+      events.push(ev); if (o.call_id) byId.set(o.call_id, ev);
+      continue;
+    }
     if (o.type === 'function_call' || o.type === 'custom_tool_call') {
       const name = String(o.name || '');
       if (name === 'apply_patch' || /apply_patch/.test(String(o.input || o.arguments || '').slice(0, 40))) {
@@ -170,6 +198,13 @@ function parseCodex(file) {
       if (c) { const ev = { kind: 'cmd', command: c.command, cwd: c.cwd || cwd, id: o.call_id, failed: false, ...base }; events.push(ev); if (o.call_id) byId.set(o.call_id, ev); }
     } else if ((o.type === 'function_call_output' || o.type === 'local_shell_call_output' || o.type === 'custom_tool_call_output') && byId.has(o.call_id)) {
       const ev = byId.get(o.call_id);
+      if (ev.kind === 'mcp') {
+        let out = o.output;
+        if (typeof out === 'string') { try { out = JSON.parse(out); } catch { /* text */ } }
+        if (!ev.result) ev.result = out && out.content !== undefined ? out.content : out;
+        if (out && (out.success === false || out.isError === true || out.is_error === true)) ev.failed = true;
+        continue;
+      }
       let out = o.output;
       let code = null;
       if (typeof out === 'string') {

@@ -91,5 +91,100 @@ if (zlib.zstdCompressSync) {
   t('"Process exited with code 1" = failed', () => assert.strictEqual(k.resources.find((r) => r.rule === 'heroku-create').status, 'failed'));
 } else console.log('  skip zst (old Node)');
 
+// ---------------- v0.2: MCP ----------------
+console.log('mcp tool names');
+const mcp = require('../src/mcp');
+for (const [full, kind, noun] of require('./mcp-classify')) {
+  t(`${full} -> ${kind ? kind + ' ' + noun : 'ignored'}`, () => {
+    const sp = mcp.splitName(full);
+    const c = sp && mcp.classify(sp.server, sp.tool);
+    assert.strictEqual(c ? c.kind : null, kind);
+    if (kind) assert.strictEqual(c.noun, noun);
+  });
+}
+
+console.log('mcp in session logs');
+const { makeMcp } = require('./mcp-fixtures');
+const mh = fs.mkdtempSync(path.join(os.tmpdir(), 'al-mcp-'));
+makeMcp(mh);
+const menv = { ...env, HOME: mh, USERPROFILE: mh };
+const mrun = (args, extra = {}) => spawnSync(process.execPath, [bin, ...args], { env: { ...menv, ...extra }, encoding: 'utf8' });
+const m = JSON.parse(mrun(['--json']).stdout);
+const mf = (pred) => m.resources.find(pred);
+t('supabase project from MCP, named with its ref', () => {
+  const r = mf((x) => x.rule === 'mcp-supabase-project' && x.id === 'qwertyref123');
+  assert.ok(r && r.status === 'left' && r.via === 'mcp' && r.server === 'supabase');
+  assert.ok(r.teardown.startsWith('supabase projects delete qwertyref123'));
+  assert.strictEqual(r.cost, 'hourly');
+});
+t('supabase edge function found', () => assert.ok(mf((x) => x.rule === 'mcp-supabase-function' && x.status === 'left')));
+t('migration / list / sql calls ignored', () => assert.ok(!m.resources.some((x) => /apply_migration|list_projects/.test(x.command))));
+t('neon branch created then deleted = cleaned', () => assert.strictEqual(mf((x) => x.rule === 'mcp-neon-branch').status, 'cleaned'));
+t('github branch and issue ignored', () => assert.ok(!m.resources.some((x) => /github/.test(x.command))));
+t('is_error MCP create = failed', () => assert.strictEqual(mf((x) => x.rule === 'mcp-cloudflare-database').status, 'failed'));
+t('"Error:" text result = failed', () => assert.strictEqual(mf((x) => x.rule === 'mcp-supabase-project' && /saas-prod/.test(x.name)).status, 'failed'));
+t('vercel deploy id pulled from prose result', () => assert.strictEqual(mf((x) => x.rule === 'mcp-vercel-deployment').id, 'dpl_abc'));
+t('codex event_msg MCP call (e2b sandbox)', () => { const r = mf((x) => x.rule === 'mcp-e2b-sandbox' && x.status === 'left'); assert.ok(r && r.id === 'sbx_99' && r.agent === 'codex'); });
+t('codex server__tool function call (droplet)', () => { const r = mf((x) => x.rule === 'mcp-digitalocean-instance'); assert.ok(r && r.status === 'left' && r.teardown.startsWith('doctl compute droplet delete 4455')); });
+t('codex MCP Err = failed', () => assert.ok(m.resources.some((x) => x.rule === 'mcp-e2b-sandbox' && x.status === 'failed')));
+const mleft = m.resources.filter((x) => x.status === 'left');
+t('mcp left count = 5', () => assert.strictEqual(mleft.length, 5, mleft.map((x) => x.rule + ':' + x.name).join(', ')));
+const mtxt = mrun([]).stdout;
+t('text output says via MCP', () => assert.ok(/via MCP: supabase/.test(mtxt)));
+t('text output suggests --verify', () => assert.ok(/Add --verify/.test(mtxt)));
+
+// ---------------- v0.2: --verify ----------------
+console.log('--verify');
+const vh = fs.mkdtempSync(path.join(os.tmpdir(), 'al-ver-'));
+make(vh); makeMcp(vh);
+const fb = path.join(vh, 'fakebin');
+const { makeFakeBin } = require('./fake-cli');
+const calls = makeFakeBin(fb);
+const venv = { ...env, HOME: vh, USERPROFILE: vh, PATH: fb };
+const vrun = (args) => spawnSync(process.execPath, [bin, ...args], { env: venv, encoding: 'utf8' });
+vrun(['--json']);
+t('without --verify nothing is executed', () => assert.strictEqual(fs.readFileSync(calls, 'utf8'), ''));
+const v = JSON.parse(vrun(['--json', '--verify']).stdout);
+const vf = (rule, name) => v.resources.find((r) => r.rule === rule && (!name || r.name === name || r.id === name));
+t('existing VM confirmed', () => { const r = vf('gcp-vm', 'llm-worker-1'); assert.strictEqual(r.live, 'exists'); assert.strictEqual(r.status, 'left'); });
+t('deleted disk marked gone', () => { const r = vf('gcp-disk', 'scratch-250'); assert.strictEqual(r.live, 'gone'); assert.strictEqual(r.status, 'gone'); });
+t('permission error = unknown, stays left', () => { const r = vf('gcp-run', 'pdf-api'); assert.strictEqual(r.live, 'unknown'); assert.strictEqual(r.status, 'left'); assert.ok(/PERMISSION_DENIED/.test(r.liveNote)); });
+t('enabled API confirmed, other API gone', () => { assert.strictEqual(vf('gcp-api', 'aiplatform.googleapis.com').live, 'exists'); assert.strictEqual(vf('gcp-api', 'run.googleapis.com').live, 'gone'); });
+t('EC2 by Name tag confirmed', () => assert.strictEqual(vf('aws-ec2').live, 'exists'));
+t('missing CLI = unknown, not gone', () => { const r = vf('fly-app', 'site-preview'); assert.strictEqual(r.live, 'unknown'); assert.ok(/not installed/.test(r.liveNote)); });
+t('MCP supabase project confirmed via supabase CLI', () => assert.strictEqual(vf('mcp-supabase-project', 'qwertyref123').live, 'exists'));
+t('MCP vercel deployment gone', () => assert.strictEqual(vf('mcp-vercel-deployment').status, 'gone'));
+t('$RANDOM name is not checked', () => assert.strictEqual(v.resources.find((r) => r.rule === 'gcp-vm' && r.nameUnknown).liveNote, 'name not in the log'));
+const logged = fs.readFileSync(calls, 'utf8').trim().split('\n');
+t('every call made was read-only', () => {
+  assert.ok(logged.length >= 6, 'calls: ' + logged.length);
+  for (const l of logged) assert.ok(/\b(describe|list|inspect|describe-instances)\b/.test(l) && !/\b(delete|create|rm|terminate|destroy)\b/.test(l), l);
+});
+t('summary counts in JSON', () => { assert.ok(v.verified.checked >= 6); assert.ok(v.verified.gone >= 3); });
+const vtxt = vrun(['--verify']);
+t('text shows checked status and summary', () => { assert.ok(/\[checked: still exists\]/.test(vtxt.stdout)); assert.ok(/--verify: ran [0-9]+ read-only check/.test(vtxt.stdout)); });
+t('gone items do not count toward exit code', () => assert.strictEqual(vtxt.status, 1));
+
+console.log('verify safety');
+const ver = require('../src/verify');
+const { rules } = require('../src/rules');
+t('every check for every rule is read-only', () => {
+  const ids = [...rules.map((r) => r.id), 'mcp-supabase-project', 'mcp-neon-project', 'mcp-vercel-deployment', 'mcp-cloudflare-database', 'mcp-cloudflare-bucket'];
+  let n = 0;
+  for (const id of ids) {
+    const chk = ver.checkFor({ rule: id, name: 'thing-1', id: 'thing-1', command: 'x --zone z --region r --project p' });
+    if (!chk) continue;
+    n++;
+    ver.assertReadOnly(chk.cmd, chk.args, ['thing-1']);
+  }
+  assert.ok(n >= 20, 'checks: ' + n);
+});
+t('write commands are refused', () => assert.throws(() => ver.assertReadOnly('gcloud', ['compute', 'instances', 'delete', 'x'])));
+t('odd characters in a name are never run', () => {
+  const f = { rule: 'gcp-vm', name: "vm'; rm -rf ~", command: 'gcloud compute instances create x', status: 'left' };
+  ver.verify([f]);
+  assert.strictEqual(f.live, 'unknown'); assert.ok(/unusual characters/.test(f.liveNote));
+});
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

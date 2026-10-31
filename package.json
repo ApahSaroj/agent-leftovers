@@ -1,7 +1,7 @@
 {
   "name": "agent-leftovers",
-  "version": "0.1.0",
-  "description": "See every cloud resource your AI coding agent spun up, and the command to turn each off. Reads Claude Code and Codex logs locally. Read-only.",
+  "version": "0.2.0",
+  "description": "See every cloud resource your AI coding agent spun up, through the shell or MCP, and the command to turn each off. Reads Claude Code and Codex logs locally. Optional read-only --verify.",
   "bin": {
     "agent-leftovers": "bin/agent-leftovers.js"
   },
@@ -12,7 +12,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "test:stress": "node test/stress.js"
   },
   "keywords": [
     "claude-code",
@@ -24,7 +25,10 @@
     "aws",
     "cloudflare",
     "vercel",
-    "cli"
+    "cli",
+    "mcp",
+    "supabase",
+    "neon"
   ],
   "engines": {
     "node": ">=18"

@@ -20,7 +20,8 @@ function text(result, opts) {
   const failed = resources.filter((r) => r.status === 'failed');
   const L = [];
   const pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  L.push(c.bold('agent-leftovers') + c.dim(`  read ${pl(result.cmdCount, 'agent command')} in ${pl(result.sessionCount, 'session')} from the last ${opts.days} days`));
+  const mcpPart = result.mcpCalls ? ` and ${pl(result.mcpCalls, 'MCP call')}` : '';
+  L.push(c.bold('agent-leftovers') + c.dim(`  read ${pl(result.cmdCount, 'agent command')}${mcpPart} in ${pl(result.sessionCount, 'session')} from the last ${opts.days} days`));
   L.push('');
 
   const show = (list, head, colour) => {
@@ -31,7 +32,9 @@ function text(result, opts) {
     for (const r of list) {
       const costTag = r.gpu ? c.red(c.bold(pad('GPU, HOURLY', 13))) : r.cost === 'hourly' ? c.red(pad(COST[r.cost], 13)) : c.yellow(pad(COST[r.cost], 13));
       L.push(`  ${costTag}${pad(r.provider, 10)}${c.bold(pad(r.what, 26))}${pad(short(r.name), 30)}${c.dim(day(r.time))}`);
-      L.push(c.dim(`      where: ${short(r.cwd) || '?'}  (${r.agent}${r.times > 1 ? `, created ${r.times}x` : ''})`));
+      const via = r.via === 'mcp' ? `, via MCP: ${r.server}` : '';
+      const live = r.live === 'exists' ? c.red('  [checked: still exists]') : r.live === 'unknown' ? c.dim(`  [could not check: ${r.liveNote}]`) : '';
+      L.push(c.dim(`      where: ${short(r.cwd) || '?'}  (${r.agent}${via}${r.times > 1 ? `, created ${r.times}x` : ''})`) + live);
       L.push(`      ${c.cyan('turn off:')} ${r.teardown}`);
     }
     L.push('');
@@ -57,13 +60,17 @@ function text(result, opts) {
   }
   if (opts.all) {
     show(cleaned, `${cleaned.length} the agent already cleaned up`, c.green);
+    show(resources.filter((r) => r.status === 'gone'), `${resources.filter((r) => r.status === 'gone').length} already gone (checked with --verify)`, c.green);
     show(failed, `${failed.length} create commands that failed (probably nothing was made)`, c.dim);
-  } else if (cleaned.length || failed.length) {
-    L.push(c.dim(`  + ${cleaned.length} already cleaned up, ${failed.length} failed create${failed.length === 1 ? '' : 's'} hidden. Use --all to see them.`));
+  } else if (cleaned.length || failed.length || resources.some((r) => r.status === 'gone')) {
+    const gone = resources.filter((r) => r.status === 'gone').length;
+    L.push(c.dim(`  + ${cleaned.length} already cleaned up, ${gone ? `${gone} already gone, ` : ''}${failed.length} failed create${failed.length === 1 ? '' : 's'} hidden. Use --all to see them.`));
     L.push('');
   }
-  L.push(c.dim('Read-only: nothing was run or changed. Check each command before you run it.'));
-  L.push(c.dim('Blind spots: things made through MCP tools, web consoles or scripts are not in the shell log.'));
+  L.push(c.dim(result.verified ? 'Read-only: only describe/list calls were run, nothing was changed. Check each command before you run it.' : 'Read-only: nothing was run or changed. Check each command before you run it.'));
+  if (result.verified) { const v = result.verified; L.push(c.dim(`--verify: ran ${v.checked} read-only check${v.checked === 1 ? '' : 's'}: ${v.exists} still exist, ${v.gone} already gone, ${v.unknown} couldn't be confirmed. ${v.skipped} had no check (no name in the log, or no check for that type yet).`)); }
+  else L.push(c.dim('Read from logs only. Add --verify to ask your cloud CLIs which of these still exist.'));
+  L.push(c.dim('Blind spots: things made in web consoles, by scripts the agent wrote, or by MCP servers we don\'t recognise.'));
   if (left.length) L.push(c.dim('Tip: agent-leftovers --script > teardown.sh  (every command commented out, you choose)'));
   return L.join('\n');
 }

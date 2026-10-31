@@ -2,6 +2,58 @@
 const path = require('path');
 const { splitCommands, tokenize } = require('./shell');
 const { rules, matchPrefix } = require('./rules');
+const mcp = require('./mcp');
+
+const LABEL = { supabase: 'Supabase', neon: 'Neon', vercel: 'Vercel', cloudflare: 'Cloudflare', aws: 'AWS', gcloud: 'Google Cloud', azure: 'Azure', railway: 'Railway', render: 'Render', netlify: 'Netlify', fly: 'Fly.io', digitalocean: 'DigitalOcean', heroku: 'Heroku', planetscale: 'PlanetScale', upstash: 'Upstash', pinecone: 'Pinecone', mongodb: 'MongoDB Atlas', turso: 'Turso', firebase: 'Firebase', modal: 'Modal', runpod: 'RunPod', e2b: 'E2B', koyeb: 'Koyeb', convex: 'Convex' };
+
+// Every string value in an MCP call's arguments (one level of nesting), to match deletes.
+function idsIn(input) {
+  const out = new Set();
+  const add = (v) => { if (typeof v === 'string' && v.trim()) out.add(v.trim()); else if (typeof v === 'number') out.add(String(v)); };
+  if (input && typeof input === 'object') {
+    for (const v of Object.values(input)) {
+      add(v);
+      if (Array.isArray(v)) v.forEach(add);
+      else if (v && typeof v === 'object') Object.values(v).forEach(add);
+    }
+  }
+  return out;
+}
+
+function mcpFindings(evs, addFinding, found) {
+  for (const ev of evs) {
+    if (ev.kind !== 'mcp') continue;
+    const sp = mcp.splitName(ev.tool_name);
+    if (!sp) continue;
+    const c = mcp.classify(sp.server, sp.tool);
+    if (!c) continue;
+    const res = mcp.resultObj(ev.result);
+    const resText = mcp.resultText(ev.result);
+    const resErr = (res && typeof res === 'object' && (res.error || res.isError === true) && !mcp.pick(res, mcp.ID_KEYS)) || /^\s*(error|failed)\b/i.test(resText);
+    const failed = ev.failed || !!resErr;
+    if (c.kind === 'delete') {
+      if (failed) continue;
+      const ids = idsIn(ev.input);
+      for (const f of found.values()) {
+        if (f.via !== 'mcp' || f.provider !== c.provider || f.status !== 'left') continue;
+        if ((f.id && ids.has(f.id)) || (f.name && ids.has(f.name))) f.status = 'cleaned';
+      }
+      continue;
+    }
+    const name = mcp.pick(ev.input, mcp.NAME_KEYS) || (res && mcp.pick(res, mcp.NAME_KEYS)) || null;
+    const id = (res && mcp.pick(res, mcp.ID_KEYS)) || null;
+    const handle = id || name;
+    const label = LABEL[c.provider] || sp.server;
+    const args = JSON.stringify(ev.input || {});
+    addFinding(`mcp|${c.provider}|${c.noun}|${handle || ev.time}`, {
+      rule: `mcp-${c.provider}-${c.noun.replace(/\s+/g, '-').toLowerCase()}`, provider: c.provider, what: `${label} ${c.noun}`, gpu: c.noun === 'GPU pod', cost: c.cost,
+      name: name && id && name !== id ? `${name} (${id})` : handle || '(name not in the log)', id, nameUnknown: !handle,
+      teardown: mcp.teardownFor(c, { name, id, server: sp.server, input: ev.input }), command: `${ev.tool_name} ${args.length > 160 ? args.slice(0, 157) + '...' : args}`,
+      time: ev.time, cwd: ev.cwd, session: ev.session, agent: ev.tool, via: 'mcp', server: sp.server, url: c.url,
+      status: failed ? 'failed' : 'left', failed, times: 1,
+    });
+  }
+}
 
 const AI_APIS = [
   { re: /api\.openai\.com|from openai import|import openai|require\(['"]openai['"]\)|from ['"]openai['"]|new OpenAI\(|OpenAI\(\)/, name: 'OpenAI', usage: 'https://platform.openai.com/usage' },
@@ -77,6 +129,8 @@ function scan(events, { project } = {}) {
     }
   }
 
+  mcpFindings(evs, addFinding, found);
+
   // Scripts the agent wrote that call a paid AI API with your key.
   const scripts = new Map();
   for (const ev of evs) {
@@ -113,7 +167,7 @@ function scan(events, { project } = {}) {
       ? `pkill -f "${path.basename(s.file)}"   # stop it, then check ${s.usage}`
       : `open ${s.usage}`,
   }));
-  return { resources, spend, scannedEvents: evs.length };
+  return { resources, spend, scannedEvents: evs.length, mcpCalls: evs.filter((e) => e.kind === 'mcp').length };
 }
 
 module.exports = { scan, short };
