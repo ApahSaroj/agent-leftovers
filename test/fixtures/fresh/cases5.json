@@ -1,0 +1,6 @@
+{
+ "eks-arn-ctx": ["kubectl --context arn:aws:eks:us-east-1:123456789012:cluster/prod expose deployment web --type=LoadBalancer --port 80"],
+ "eks-arn-ctx-use": ["kubectl config use-context arn:aws:eks:us-east-1:123456789012:cluster/prod", "kubectl expose deployment web --type=LoadBalancer --port 80"],
+ "helm-eks-ctx": ["helm install pg bitnami/postgresql --kube-context arn:aws:eks:us-east-1:123456789012:cluster/prod"],
+ "aws-eks-update-kubeconfig": ["aws eks update-kubeconfig --name prod --region us-east-1", "kubectl expose deployment web --type=LoadBalancer --port 80"]
+}

@@ -252,11 +252,12 @@ module.exports = function run(t, bin, env) {
   t('sweep: az missing is reported, not fatal', () => assert.ok(js.sweep.ran.some((r) => r.cli === 'az' && /not installed/.test(r.note))));
   t('sweep teardowns are right', () => {
     const get = (n) => js.sweep.items.find((i) => i.name === n).teardown;
-    assert.strictEqual(get('eval-gpu-7'), 'gcloud compute instances delete eval-gpu-7 --zone us-central1-a   # asks before deleting');
-    assert.ok(get('demo-ip').startsWith('gcloud compute addresses delete demo-ip --region us-central1 '));
+    assert.strictEqual(get('eval-gpu-7'), 'gcloud compute instances delete eval-gpu-7 --zone us-central1-a');
+    assert.strictEqual(js.sweep.items.find((i) => i.name === 'eval-gpu-7').teardownHint, 'asks before deleting');
+    assert.strictEqual(get('demo-ip'), 'gcloud compute addresses delete demo-ip --region us-central1');
     assert.ok(!js.sweep.items.some((i) => /--quiet|--force|--skip-final-snapshot/.test(i.teardown)));
     assert.strictEqual(get('eipalloc-0aa'), 'aws ec2 release-address --allocation-id eipalloc-0aa --region us-east-1');
-    assert.ok(get('tmp-bucket-9').startsWith('aws s3 rb s3://tmp-bucket-9 '));
+    assert.strictEqual(get('tmp-bucket-9'), 'aws s3 rb s3://tmp-bucket-9');
   });
   const logged = fs.readFileSync(calls, 'utf8').trim().split('\n');
   t('sweep ran only list / get-resources calls', () => { assert.ok(logged.length === 4); assert.ok(logged.every((l) => / list | get-resources /.test(l + ' '))); });

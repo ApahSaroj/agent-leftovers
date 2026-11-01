@@ -1,0 +1,382 @@
+{
+ "cases1/timeout-prefix": [
+  "left:gcp-sql:ml-db => gcloud sql instances delete ml-db"
+ ],
+ "cases1/nohup-ngrok": [
+  "left:tunnel-ngrok:8080 => pgrep -af ngrok"
+ ],
+ "cases1/nohup-gcloud": [
+  "left:gcp-vm:nh-vm => gcloud compute instances delete nh-vm --zone us-central1-a"
+ ],
+ "cases1/docker-run-h": [
+  "left:docker-run:pg => docker ps -a --filter name=pg"
+ ],
+ "cases1/subshell": [
+  "left:iac-terraform:/w/p/infra => terraform -chdir=/w/p/infra state list"
+ ],
+ "cases1/subshell2": [
+  "left:gcp-vm:sub-vm => gcloud compute instances delete sub-vm --zone us-central1-a"
+ ],
+ "cases1/brace": [
+  "left:gcp-vm:br-vm => gcloud compute instances delete br-vm --zone us-central1-a"
+ ],
+ "cases1/if-then": [
+  "left:gcp-vm:it-vm => gcloud compute instances delete it-vm --zone us-central1-a"
+ ],
+ "cases1/for-do": [
+  "left:gcp-vm:vm-$z => gcloud compute instances delete <NAME> --zone '$z'"
+ ],
+ "cases1/bash-lc": [
+  "left:gcp-vm:lc-vm => gcloud compute instances delete lc-vm --zone us-central1-a"
+ ],
+ "cases1/aws-vault": [
+  "left:aws-ec2:1 x p4d.24xlarge => aws ec2 describe-instances --filters Name=instance-state-name,Values=running --query \"Reservations[].Instances[].InstanceId\""
+ ],
+ "cases1/doppler": [
+  "left:fly-app:dop-app => fly apps destroy dop-app"
+ ],
+ "cases1/op-run": [
+  "left:iac-terraform:/w/p => terraform -chdir=/w/p state list"
+ ],
+ "cases1/pnpm-exec": [
+  "left:cf-d1:pe-db => wrangler d1 delete pe-db"
+ ],
+ "cases1/npm-exec": [
+  "left:cf-d1:ne-db => wrangler d1 delete ne-db"
+ ],
+ "cases1/bun-x": [
+  "left:cf-d1:bx-db => wrangler d1 delete bx-db"
+ ],
+ "cases1/nice": [
+  "left:bg-process:train.py => pgrep -af train.py"
+ ],
+ "cases1/xargs": [],
+ "cases1/tf-refresh-only": [],
+ "cases1/tf-destroy-target": [
+  "left:iac-terraform:/w/p => terraform -chdir=/w/p state list"
+ ],
+ "cases1/tf-destroy-other-dir": [
+  "left:iac-terraform:/w/a => terraform -chdir=/w/a state list"
+ ],
+ "cases1/compose-stop": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p ps"
+ ],
+ "cases1/compose-down-other-dir": [
+  "left:docker-compose:/w/a => docker compose --project-directory /w/a ps"
+ ],
+ "cases1/docker-rm": [
+  "cleaned:docker-run:r1 => docker ps -a --filter name=r1"
+ ],
+ "cases1/docker-stop": [
+  "cleaned:docker-run:r2 => docker ps -a --filter name=r2"
+ ],
+ "cases1/pkill-bg": [
+  "cleaned:bg-process:server.js => pgrep -af server.js"
+ ],
+ "cases1/kill-bg": [
+  "maybe-cleaned:bg-process:worker.py => pgrep -af worker.py"
+ ],
+ "cases1/grep-nohup": [],
+ "cases1/ps-grep": [],
+ "cases1/echo-amp": [],
+ "cases1/gcloud-bg": [
+  "left:gcp-vm:bgvm => gcloud compute instances delete bgvm --zone us-central1-a"
+ ],
+ "cases1/vercel-rm": [
+  "maybe-cleaned:vercel-deploy:/w/p => vercel ls"
+ ],
+ "cases1/gcloud-async": [
+  "left:gcp-vm:as-vm => gcloud compute instances delete as-vm --zone us-central1-a"
+ ],
+ "cases1/gke-delete-async": [
+  "cleaned:gcp-gke:k1 => gcloud container clusters delete k1 --zone us-central1-a"
+ ],
+ "cases1/gcloud-zone-config": [
+  "cleaned:gcp-vm:zc-vm => gcloud compute instances delete zc-vm --zone us-east1-b"
+ ],
+ "cases1/ec2-terminate-dryrun": [
+  "left:aws-ec2:1 x t3.micro => aws ec2 describe-instances --filters Name=instance-state-name,Values=running --query \"Reservations[].Instances[].InstanceId\""
+ ],
+ "cases1/s3-rm-only": [
+  "left:aws-s3:s3://only-rm-b => aws s3 rb s3://only-rm-b"
+ ],
+ "cases1/heredoc-unterminated": [],
+ "cases1/heredoc-then-run": [],
+ "cases1/write-then-run": [
+  "left:gcp-vm:ws-vm => gcloud compute instances delete ws-vm --zone us-central1-a"
+ ],
+ "cases1/write-then-run-dotslash-sub": [
+  "left:gcp-vm:ws2-vm => gcloud compute instances delete ws2-vm --zone us-central1-a"
+ ],
+ "cases2/compose-up-bgflag": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p ps"
+ ],
+ "cases2/compose-up-amp": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p ps"
+ ],
+ "cases2/docker-run-bgflag": [
+  "left:docker-run:pgfg => docker ps -a --filter name=pgfg"
+ ],
+ "cases2/ngrok-bgflag": [
+  "left:tunnel-ngrok:3000 => pgrep -af ngrok"
+ ],
+ "cases2/cloudflared-bgflag": [
+  "left:tunnel-cloudflared:http://localhost:8080 => pgrep -af cloudflared"
+ ],
+ "cases2/npm-dev-bgflag": [
+  "left:bg-process:npm => pgrep -af npm"
+ ],
+ "cases2/npm-i-then-dev-bgflag": [
+  "left:bg-process:npm => pgrep -af npm"
+ ],
+ "cases2/kubectl-pf-bgflag": [
+  "left:bg-process:kubectl => pgrep -af kubectl"
+ ],
+ "cases2/timeout-delete": [
+  "maybe-cleaned:gcp-vm:td-vm => gcloud compute instances delete td-vm --zone us-central1-a"
+ ],
+ "cases2/failed-line-delete-first": [
+  "maybe-cleaned:gcp-vm:fl-vm => gcloud compute instances delete fl-vm --zone us-central1-a"
+ ],
+ "cases2/create-uncertain": [
+  "left:gcp-gke:un-gke => gcloud container clusters delete un-gke --zone us-central1-a"
+ ],
+ "cases2/gke-get-cred-noproj": [
+  "left:gcp-gke:np-gke => gcloud container clusters delete np-gke --zone us-central1-a",
+  "left:k8s-lb-service:web => kubectl config current-context"
+ ],
+ "cases2/region-then-delete-noregion": [
+  "maybe-cleaned:aws-ec2:rg-box => aws ec2 describe-instances --filters Name=instance-state-name,Values=running --query \"Reservations[].Instances[].InstanceId\" --region eu-west-1"
+ ],
+ "cases2/gcloud-project-flag-then-delete-noflag": [
+  "cleaned:gcp-vm:pf-vm => gcloud compute instances delete pf-vm --zone us-central1-a --project p1"
+ ],
+ "cases2/az-vm": [
+  "cleaned:az-group:rg1 => az resource list -g rg1 -o table",
+  "cleaned:az-vm:azvm1 => az vm delete -g rg1 -n azvm1"
+ ],
+ "cases2/helm-install": [
+  "cleaned:helm-release:pg => helm uninstall pg"
+ ],
+ "cases2/helm-install-ns": [
+  "left:helm-release:pg (ns db) => helm uninstall pg -n db"
+ ],
+ "cases2/terraform-apply-var": [
+  "left:iac-terraform:/w/p => terraform -chdir=/w/p state list"
+ ],
+ "cases2/terraform-in-subdir-flag": [
+  "cleaned:iac-terraform:/w/p/infra/prod => terraform -chdir=/w/p/infra/prod state list"
+ ],
+ "cases2/tofu": [
+  "left:iac-terraform:/w/p => tofu -chdir=/w/p state list"
+ ],
+ "cases2/fly-machine-run": [
+  "left:fly-machine:nginx => fly machine list -a acme-app"
+ ],
+ "cases2/fly-scale": [],
+ "cases2/gcloud-run-jobs": [],
+ "cases2/vertex-endpoint": [],
+ "cases2/tpu": [
+  "left:gcp-tpu:tpu1 => gcloud compute tpus tpu-vm delete tpu1 --zone us-central2-b"
+ ],
+ "cases2/railway": [
+  "left:railway-up:/w/p => [in /w/p] railway status"
+ ],
+ "cases2/modal": [
+  "left:modal-deploy:app.py => modal app list"
+ ],
+ "cases2/aws-ecs": [
+  "left:aws-ecs:s1 => aws ecs update-service --cluster c1 --service s1 --desired-count 0"
+ ],
+ "cases2/aws-eks": [
+  "left:aws-eksctl:ek1 => eksctl delete cluster --name ek1 --region us-east-1"
+ ],
+ "cases2/aws-sagemaker": [
+  "left:aws-sagemaker:sm-ep => aws sagemaker delete-endpoint --endpoint-name sm-ep"
+ ],
+ "cases2/aws-nat": [
+  "left:aws-nat:subnet-1 => aws ec2 describe-nat-gateways"
+ ],
+ "cases2/gcloud-sql-patch": [],
+ "cases2/bucket-name-weird": [
+  "left:gcp-bucket:gs://a b => gcloud storage buckets delete gs://<NAME>"
+ ],
+ "cases2/vm-name-injection": [
+  "left:gcp-vm:x;touch /tmp/pwn => gcloud compute instances delete <NAME> --zone us-central1-a"
+ ],
+ "cases2/zone-injection": [
+  "left:gcp-vm:okvm => gcloud compute instances delete okvm --zone 'us-central1-a;id'"
+ ],
+ "cases2/project-injection": [
+  "left:gcp-vm:pj-vm => gcloud compute instances delete pj-vm --zone us-central1-a"
+ ],
+ "cases2/region-injection-aws": [
+  "left:aws-s3:s3://inj-bucket => aws s3 rb s3://inj-bucket"
+ ],
+ "cases2/compose-file-injection": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p -f '/w/p/a b;id.yml' ps"
+ ],
+ "cases2/compose-project-injection": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p -p 'x$(id)' ps"
+ ],
+ "cases2/tf-workspace-injection": [
+  "left:iac-terraform:/w/p => TF_WORKSPACE='a$(id)' terraform -chdir=/w/p state list"
+ ],
+ "cases2/serverless-stage-injection": [
+  "left:iac-serverless:/w/p => [in /w/p] serverless info --stage 'dev;id'"
+ ],
+ "cases2/bg-word-injection": [
+  "left:bg-process:$(cat => pgrep -af ..cat"
+ ],
+ "cases2/bg-word-quote": [
+  "left:bg-process:my server => pgrep -af my.server"
+ ],
+ "cases2/k8s-ns-injection": [],
+ "cases2/helm-name-injection": [
+  "left:helm-release:(name not in the log) => helm uninstall <NAME>"
+ ],
+ "cases2/docker-name-injection": [
+  "left:docker-run:a$(id) => docker ps -a --filter name=<NAME>"
+ ],
+ "cases2/eksctl-name": [
+  "left:aws-eksctl:e;id => eksctl delete cluster --name <NAME> --region us-east-1"
+ ],
+ "cases2/fly-app-injection": [
+  "left:fly-app:f$(id) => fly apps destroy <NAME>"
+ ],
+ "cases2/cd-dollar": [
+  "left:iac-terraform:/w/$(id) => terraform -chdir=<NAME> state list"
+ ],
+ "cases2/cd-quote": [
+  "left:iac-terraform:/w/it's => terraform '-chdir=/w/it'\\''s' state list"
+ ],
+ "cases2/cd-newline": [
+  "left:docker-compose:/w/a\nid => docker compose --project-directory '/w/a\nid' ps"
+ ],
+ "cases3/bg-cmdsub": [
+  "left:bg-process:pwn-bg) => pgrep -af pwn-bg."
+ ],
+ "cases3/bg-backtick": [
+  "left:bg-process:`id` => pgrep -af .id."
+ ],
+ "cases3/bg-quote-dq": [
+  "left:bg-process:a\"b => pgrep -af a.b"
+ ],
+ "cases3/bg-flag-cmdsub": [
+  "left:bg-process:$(id) => pgrep -af ..id."
+ ],
+ "cases3/bg-script-weird": [
+  "left:bg-process:my;id.py => pgrep -af my.id.py"
+ ],
+ "cases3/spend-weird-file": [
+  "spend:/w/x/$(id).py => pgrep -af ..id..py"
+ ],
+ "cases3/ngrok-weird": [
+  "left:tunnel-ngrok:3000;id => pgrep -af ngrok"
+ ],
+ "cases3/aws-tag-region-filter": [
+  "left:aws-ec2:1 x t3.micro => aws ec2 describe-instances --filters Name=instance-state-name,Values=running --query \"Reservations[].Instances[].InstanceId\" --region us-east-2"
+ ],
+ "cases3/gke-ctx-weird-project": [
+  "left:gcp-gke:k => gcloud container clusters delete k --zone us-central1-a",
+  "left:k8s-lb-service:web => kubectl config current-context"
+ ],
+ "cases3/k8s-ctx-flag": [
+  "left:k8s-lb-service:web => kubectl delete service web --context <CONTEXT>"
+ ],
+ "cases3/k8s-ns-weird": [
+  "left:k8s-lb-service:web (ns <NAMESPACE>) => kubectl delete service web -n <NAMESPACE>"
+ ],
+ "cases3/helm-ns-weird": [
+  "left:helm-release:rel (ns <NAMESPACE>) => helm uninstall rel -n <NAMESPACE>"
+ ],
+ "cases3/az-rg-weird": [
+  "left:az-vm:vmw => az vm delete -g 'rg$(id)' -n vmw"
+ ],
+ "cases3/aws-profile-weird": [
+  "left:aws-s3:s3://pw-bucket => aws s3 rb s3://pw-bucket"
+ ],
+ "cases3/cf-r2-jur": [
+  "left:cf-r2:b1 => wrangler r2 bucket delete b1 --jurisdiction 'eu;id'"
+ ],
+ "cases3/fly-app-flag": [
+  "left:fly-machine:nginx => fly machine list -a 'a$(id)'"
+ ],
+ "cases3/heroku-addon": [
+  "left:heroku-addon:heroku-postgresql:mini => heroku addons --app 'h$(id)'"
+ ],
+ "cases3/supabase-ref": [
+  "left:supabase-fn:fn1 => supabase functions list --project-ref 'r$(id)'"
+ ],
+ "cases3/compose-envfile": [
+  "left:docker-compose:/w/p => docker compose --project-directory /w/p --env-file '.env;id' ps"
+ ],
+ "cases3/orphan-disk-zone": [
+  "cleaned:gcp-vm:od => gcloud compute instances delete od --zone 'us-central1-a$(id)'",
+  "left:gcp-kept-disk:od (boot disk) => gcloud compute disks list --filter=\"-users:*\""
+ ],
+ "cases3/mcp-vercel": [
+  "left:mcp-vercel-deployment:x$(id) (dpl_$(id)) => vercel ls"
+ ],
+ "cases3/mcp-supabase": [
+  "left:mcp-supabase-project:s;id (abc$(id)) => supabase projects delete <NAME>"
+ ],
+ "cases4/k8s-ns-before-verb": [
+  "left:k8s-lb-service:web (ns shop) => kubectl delete service web -n shop"
+ ],
+ "cases4/k8s-ns-after": [
+  "left:k8s-lb-service:web (ns shop) => kubectl delete service web -n shop"
+ ],
+ "cases4/k8s-ctx-before": [
+  "left:k8s-lb-service:web => kubectl delete service web --context prod-east"
+ ],
+ "cases4/k8s-ctx-after": [
+  "left:k8s-lb-service:web => kubectl delete service web --context prod-east"
+ ],
+ "cases4/k8s-apply-ns-before": [
+  "left:k8s-lb-service:lb1 (ns shop) => kubectl delete service lb1 -n shop"
+ ],
+ "cases4/k8s-delete-ns-mismatch": [
+  "left:k8s-lb-service:web (ns shop) => kubectl delete service web -n shop"
+ ],
+ "cases4/k8s-ns-env": [
+  "left:k8s-lb-service:web => kubectl delete service web"
+ ],
+ "cases4/helm-ns-before": [
+  "left:helm-release:pg (ns db) => helm uninstall pg -n db"
+ ],
+ "cases4/helm-kube-context": [
+  "left:helm-release:pg => helm uninstall pg --kube-context prod-east"
+ ],
+ "cases4/kubectl-use-context": [
+  "left:k8s-lb-service:web => kubectl delete service web --context prod-east"
+ ],
+ "cases4/kubectl-pvc": [],
+ "cases5/eks-arn-ctx": [
+  "left:k8s-lb-service:web => kubectl delete service web --context arn:aws:eks:us-east-1:123456789012:cluster/prod"
+ ],
+ "cases5/eks-arn-ctx-use": [
+  "left:k8s-lb-service:web => kubectl delete service web --context arn:aws:eks:us-east-1:123456789012:cluster/prod"
+ ],
+ "cases5/helm-eks-ctx": [
+  "left:helm-release:pg => helm uninstall pg --kube-context arn:aws:eks:us-east-1:123456789012:cluster/prod"
+ ],
+ "cases5/aws-eks-update-kubeconfig": [
+  "left:k8s-lb-service:web => kubectl config current-context"
+ ],
+ "cases6/commit-heredoc": [],
+ "cases6/pr-heredoc": [],
+ "cases6/echo-multiline-dq": [],
+ "cases6/python-c-multiline": [],
+ "cases6/ssh-remote": [],
+ "cases6/gcloud-ssh-cmd": [],
+ "cases6/watch": [
+  "left:bg-process:watch => pgrep -af watch"
+ ],
+ "cases6/npm-run-amp": [
+  "left:bg-process:npm => pgrep -af npm"
+ ],
+ "cases6/redirect-amp": [
+  "left:bg-process:http.server => pgrep -af http.server"
+ ]
+}

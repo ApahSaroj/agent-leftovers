@@ -7,6 +7,18 @@ const { execFileSync, spawnSync } = require('child_process');
 const { splitCommands, tokenize } = require('../src/shell');
 const { make } = require('./make-fixtures');
 
+// Every teardown any test produces on macOS/Linux is collected here and checked with bash -n at the end.
+const corpus = [];
+{
+  const scanMod = require('../src/scan');
+  const real = scanMod.scan;
+  scanMod.scan = function (events, opts = {}) {
+    const r = real(events, opts);
+    if ((opts.platform || process.platform) !== 'win32') for (const f of [...r.resources, ...r.spend]) corpus.push({ td: f.teardown, runIn: f.runIn, from: f.rule || f.file });
+    return r;
+  };
+}
+
 let pass = 0;
 let fail = 0;
 function t(name, fn) {
@@ -28,6 +40,7 @@ delete env.CLAUDE_CONFIG_DIR; delete env.CODEX_HOME;
 const run = (args) => spawnSync(process.execPath, [bin, ...args], { env, encoding: 'utf8' });
 
 const j = JSON.parse(run(['--json']).stdout);
+for (const f of [...j.resources, ...j.spend]) corpus.push({ td: f.teardown, runIn: f.runIn, from: f.rule || f.file });
 const left = j.resources.filter((r) => r.status === 'left');
 const by = (rule, name) => j.resources.find((r) => r.rule === rule && (!name || r.name === name));
 
@@ -189,6 +202,23 @@ t('odd characters in a name are never run', () => {
 require('./k8s-test')(t, bin, env);
 require('./v04-test')(t, bin, env);
 require('./tags-test')(t, bin, env);
+require('./scope-test')(t, bin, env);
+console.log('\nv0.4.2 matching and scope');
+require('./matching-test')(t, bin, env);
+console.log('\nv0.4.2 log readers');
+require('./logs-test')(t, bin, env);
+console.log('\nv0.4.2 teardown safety');
+require('./teardown-test')(t, bin, env);
+console.log('\nv0.4.2 round 2: Windows-safe teardowns');
+require('./windows-test')(t, bin, env);
+console.log('\nv0.4.2 round 2: cost, gcloud zone, bucket undo, new coverage');
+require('./round2-test')(t, bin, env);
+
+console.log('\nv0.4.2 fresh review: wrappers, subshells, bg processes, kills, k8s placeholders, exit codes');
+require('./fresh-test')(t, bin, env);
+
+console.log('\nevery teardown in the test corpus is valid shell');
+require('./bash-n')(t, corpus);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

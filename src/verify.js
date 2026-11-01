@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { k8sCheck } = require('./k8s');
+const { tokenize } = require('./shell');
 
 const READ_VERBS = new Set(['describe', 'list', 'get', 'info', 'head-bucket', 'inspect', 'status', 'exists', 'show', 'get-function', 'describe-instances', 'describe-db-instances', 'describe-db-clusters', 'describe-table', 'apps:info', 'ps', 'describe-volumes', 'get-resources']);
 const WRITE_WORDS = /^(delete|destroy|remove|rm|rb|terminate|create|deploy|stop|start|update|put|enable|disable|apply|kill|scale|launch|mb|undeploy|exec|patch|edit|login|logout)$|^(delete|terminate|create|put|update|remove|stop|start)-/;
@@ -38,10 +39,13 @@ function strip(n, pre) { return n && n.startsWith(pre) ? n.slice(pre.length) : n
 
 function argsFrom(f) {
   // Region / zone from the original command; project, profile and region from the scope.
-  const t = String(f.command || '').split(/\s+/);
+  // Tokenized, so --zone="us-central1-a" reads as us-central1-a (quotes removed).
+  const t = tokenize(String(f.command || ''));
   const val = (names) => { for (let i = 0; i < t.length; i++) for (const n of names) { if (t[i] === n && t[i + 1] && !t[i + 1].startsWith('-')) return t[i + 1]; if (t[i].startsWith(n + '=')) return t[i].slice(n.length + 1); } return null; };
   const sc = f.scope || {};
-  return { zone: val(['--zone']), region: val(['--region', '--location']) || sc.region || null, project: sc.project || val(['--project']), profile: sc.profile || null, global: t.includes('--global') };
+  const loc = val(['--location']);
+  const zoneLike = loc && /^[a-z]+-[a-z]+\d+-[a-z]$/.test(loc);
+  return { zone: val(['--zone']) || (zoneLike ? loc : null) || sc.zone || null, region: val(['--region']) || (loc && !zoneLike ? loc : null) || sc.region || null, project: sc.project || val(['--project']), profile: sc.profile || null, global: t.includes('--global') };
 }
 
 // Returns { cmd, args, exists?(stdout), gone?(stdout) } or null when we don't know how to check it.
@@ -157,6 +161,7 @@ function verify(resources, { timeoutMs = 20000, max = 50, env = process.env } = 
   for (const f of resources) {
     if (f.status !== 'left' && f.status !== 'maybe-cleaned') continue;
     if (f.nameUnknown) { f.live = 'unknown'; f.liveNote = 'name not in the log'; stats.skipped++; continue; }
+    if (f.ctxUnknown) { f.live = 'unknown'; f.liveNote = `cluster context not in the log (check ${f.ctxUnknown}); not asked, so the wrong cluster can't answer "gone"`; stats.skipped++; continue; }
     if (!namesOk(f)) { f.live = 'unknown'; f.liveNote = 'name has unusual characters, not checked'; stats.skipped++; continue; }
     const chk = checkFor(f);
     if (!chk) { f.live = 'unknown'; f.liveNote = 'no read-only check for this type yet'; stats.skipped++; continue; }

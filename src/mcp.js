@@ -149,12 +149,16 @@ function resultText(content) {
 }
 
 const TEARDOWN = {
-  supabase: { project: (n) => `supabase projects delete ${n}`, function: (n, i) => `supabase functions delete ${n}${i.project_id ? ` --project-ref ${i.project_id}` : ''}`, branch: (n) => `supabase branches delete ${n}` },
+  supabase: { project: (n) => `supabase projects delete ${n}`, function: (n, i) => `supabase functions delete ${n}${arg(i.project_id || i.projectId || i.project_ref) ? ` --project-ref ${arg(i.project_id || i.projectId || i.project_ref)}` : ''}`, branch: (n) => `supabase branches delete ${n}` },
   neon: { project: (n) => `neonctl projects delete ${n}`, branch: (n) => `neonctl branches delete ${n} --project-id <PROJECT_ID>`, database: (n) => `neonctl databases delete ${n} --project-id <PROJECT_ID>` },
-  vercel: { deployment: (n) => `vercel remove ${n}`, project: (n) => `vercel project rm ${n}` },
+  // A deployment is never removed by project name: `vercel remove <project>` deletes the whole project.
+  // Only a deployment id or URL is removed, and with --safe (skips a deployment that is live on an alias).
+  vercel: { deployment: (n, i, c) => (c.id && /^(dpl_|https?:\/\/)|\.vercel\.app$/.test(c.id) ? `vercel remove ${c.id} --safe` : `vercel ls${c.name ? ` ${c.name}` : ''}   # then: vercel remove <DEPLOYMENT_URL> --safe`), project: (n) => `vercel project rm ${n}` },
   cloudflare: { worker: (n) => `wrangler delete --name ${n}`, database: (n) => `wrangler d1 delete ${n}`, bucket: (n) => `wrangler r2 bucket delete ${n}`, 'KV namespace': (n) => `wrangler kv namespace delete --namespace-id ${n}`, queue: (n) => `wrangler queues delete ${n}` },
-  netlify: { deployment: (n) => `netlify sites:delete ${n}`, project: (n) => `netlify sites:delete ${n}` },
-  fly: { service: (n) => `fly apps destroy ${n}`, instance: (n) => `fly machine destroy ${n}`, volume: (n) => `fly volumes destroy ${n}` },
+  // A deploy is not a site: never offer sites:delete for one.
+  netlify: { deployment: () => 'netlify status   # roll back or delete this deploy in the Netlify UI (Deploys tab); the site itself stays', project: (n) => `netlify sites:delete ${n}` },
+  // A running machine is only destroyed with --force; the app is needed to find it.
+  fly: { service: (n) => `fly apps destroy ${n}`, instance: (n, i) => `fly machine destroy ${n} --force${arg(i.app || i.app_name || i.appName) ? ` -a ${arg(i.app || i.app_name || i.appName)}` : ''}`, volume: (n, i) => `fly volumes destroy ${n}${arg(i.app || i.app_name || i.appName) ? ` -a ${arg(i.app || i.app_name || i.appName)}` : ''}` },
   digitalocean: { instance: (n) => `doctl compute droplet delete ${n}`, database: (n) => `doctl databases delete ${n}`, cluster: (n) => `doctl kubernetes cluster delete ${n}` },
   heroku: { service: (n) => `heroku apps:destroy ${n}` },
   mongodb: { cluster: (n) => `atlas clusters delete ${n}` },
@@ -164,14 +168,21 @@ const TEARDOWN = {
   aws: { instance: (n) => `aws ec2 terminate-instances --instance-ids ${n}`, bucket: (n) => `aws s3 rb s3://${n}`, function: (n) => `aws lambda delete-function --function-name ${n}` },
 };
 
+// A value from an MCP call that may go into a shell command: plain characters only, never a flag.
+const PLAIN_ARG = /^[A-Za-z0-9][A-Za-z0-9._:\/@=+-]{0,250}$/;
+const arg = (v) => (typeof v === 'string' && PLAIN_ARG.test(v) ? v : typeof v === 'number' ? String(v) : null);
+
 // CLIs that delete by name rather than by id.
 const BY_NAME = new Set(['function', 'worker', 'bucket', 'queue', 'service']);
 function teardownFor(c, { name, id, server, input = {} }) {
   const fn = TEARDOWN[c.provider] && TEARDOWN[c.provider][c.noun];
   const byName = BY_NAME.has(c.noun) || (c.provider === 'cloudflare' && c.noun === 'database');
-  const n = (byName ? name || id : id || name) || '<NAME>';
-  const ask = `or ask your agent to delete ${c.noun} ${n} through the ${server} MCP server`;
-  if (fn) return `${fn(n, input || {})}   # ${ask}`;
+  // Names and ids come from the agent's tool call or the server's answer: anything that isn't
+  // a plain word becomes <NAME>, so it can never run as code when copied.
+  const n = arg(byName ? name || id : id || name) || '<NAME>';
+  const srv = /^[A-Za-z0-9._-]+$/.test(String(server)) ? `the ${server}` : 'its';
+  const ask = `or ask your agent to delete ${c.noun} ${n} through ${srv} MCP server`;
+  if (fn) return `${fn(n, input || {}, { name: arg(name), id: arg(id) })}   # ${ask}`;
   return `delete it at ${c.url || `the ${server} dashboard`}   # ${ask}`;
 }
 

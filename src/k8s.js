@@ -57,6 +57,31 @@ function teardownFor(noun, name, ns, ctx) {
   return '(see your cluster)';
 }
 
+function checkCtx(td, unknown) {
+  if (!unknown) return td;
+  const [cmd, note] = td.split(/\s{2,}#\s*/);
+  return `kubectl config current-context   # make sure it is ${unknown} first, then: ${cmd}${note ? `  (${note})` : ''}`;
+}
+
+// The kubeconfig context a get-credentials / update-kubeconfig creates, when the log shows enough to name it.
+function cloudContext(t, sessProject) {
+  if (t[0] === 'gcloud') {
+    const i = t.indexOf('get-credentials');
+    const name = positional(t, i + 1, ['--zone', '--region', '--location', '--project', '--account', '--configuration']);
+    const loc = flag(t, ['--zone', '--region', '--location']);
+    const proj = flag(t, ['--project']) || (t.env && t.env.CLOUDSDK_CORE_PROJECT) || sessProject;
+    return { cluster: name, ctx: name && loc && proj ? `gke_${proj}_${loc}_${name}` : null };
+  }
+  if (t[0] === 'az') {
+    const name = flag(t, ['--name', '-n']);
+    const own = flag(t, ['--context']);
+    return { cluster: name, ctx: own || (name ? (hasFlag(t, ['--admin', '-a']) ? `${name}-admin` : name) : null) };
+  }
+  if (t[0] === 'aws') return { cluster: flag(t, ['--name']), ctx: flag(t, ['--alias']) || null };
+  if (t[0] === 'eksctl') return { cluster: flag(t, ['--name', '-n']) || positional(t, 3, ['--region', '--nodes', '--node-type', '--version', '-f', '--profile']), ctx: null };
+  return { cluster: positional(t, 4, ['--context', '-t', '--access-token']), ctx: null };
+}
+
 // kubectl --context x -n y apply ... -> kubectl apply ... --context x -n y
 function hoistGlobals(t) {
   if (!t.length || !['kubectl', 'oc', 'helm'].includes(t[0])) return t;
@@ -84,6 +109,8 @@ function heredocs(command) {
 function k8sFindings(evs, addFinding, found) {
   const files = new Map(); // abs path -> latest content written by the agent
   const ctxBySession = new Map();
+  const hintBySession = new Map(); // session -> cluster name when its context name is unknown
+  const projBySession = new Map();
   let skippedLocal = 0;
 
   const isLocal = (ctx) => !!ctx && LOCAL_CTX.test(ctx);
@@ -107,8 +134,15 @@ function k8sFindings(evs, addFinding, found) {
       if (t0[0] === 'kind' && t0[1] === 'create' && t0[2] === 'cluster') { ctxBySession.set(ev.session, 'kind-' + (flag(t0, ['--name']) || 'kind')); continue; }
       if (t0[0] === 'minikube' && t0[1] === 'start') { ctxBySession.set(ev.session, 'minikube'); continue; }
       if (t0[0] === 'k3d' && t0[1] === 'cluster' && t0[2] === 'create') { ctxBySession.set(ev.session, 'k3d-' + (positional(t0, 3, ['--servers', '--agents', '-a', '-s', '--image', '-i']) || 'k3s-default')); continue; }
+      // gcloud's project, so a later get-credentials can name its context.
+      if (t0[0] === 'gcloud' && t0[1] === 'config' && t0[2] === 'set' && (t0[3] === 'project' || t0[3] === 'core/project') && t0[4]) { projBySession.set(ev.session, t0[4]); continue; }
+      if (t0[0] === 'export') { for (const kv of t0.slice(1)) { const m = kv.match(/^CLOUDSDK_CORE_PROJECT=(.+)$/); if (m) projBySession.set(ev.session, m[1]); } continue; }
       if ((t0[0] === 'gcloud' && t0.includes('get-credentials')) || (t0[0] === 'aws' && t0[1] === 'eks' && t0[2] === 'update-kubeconfig') || (t0[0] === 'az' && t0[1] === 'aks' && t0[2] === 'get-credentials') || (t0[0] === 'eksctl' && t0[1] === 'create' && t0[2] === 'cluster') || (t0[0] === 'doctl' && t0.includes('kubeconfig'))) {
-        ctxBySession.set(ev.session, '(cloud)'); continue;
+        // The context these commands make is predictable for GKE, AKS and an aliased EKS; otherwise
+        // remember the cluster's name so the teardown says which cluster to check first.
+        const c = cloudContext(t0, projBySession.get(ev.session));
+        if (c.ctx && CTX_NAME.test(c.ctx)) { ctxBySession.set(ev.session, c.ctx); hintBySession.delete(ev.session); } else { ctxBySession.set(ev.session, '(cloud)'); hintBySession.set(ev.session, c.cluster && CTX_NAME.test(c.cluster) ? c.cluster : null); }
+        continue;
       }
 
       if (t0.some((x) => x === '--dry-run' || x.startsWith('--dry-run=') || x === '--help') || (t0[0] === 'helm' && (t0.includes('template') || t0[1] === 'template'))) continue;
@@ -119,10 +153,19 @@ function k8sFindings(evs, addFinding, found) {
       const ns = ns0 && K8S_NAME.test(ns0) ? ns0 : null;
       const ctx0 = isH ? flag(t0, ['--kube-context']) : flag(t0, ['--context']);
       const explicitCtx = ctx0 && CTX_NAME.test(ctx0) ? ctx0 : null;
-      const sessCtx = ctxBySession.get(ev.session);
-      const ctx = explicitCtx || (sessCtx && sessCtx !== '(cloud)' ? sessCtx : null);
-      const local = isLocal(explicitCtx || (sessCtx === '(cloud)' ? null : sessCtx));
-      const base = { provider: 'k8s', time: ev.time, cwd: ev.cwd, session: ev.session, agent: ev.tool, status: 'left', failed: false, times: 1, ns: ns || null, ctx: ctx || null, command: simple };
+      // An odd -n / --context value (shell characters) is never dropped, which would point the
+      // teardown at the current namespace or context: it becomes <NAMESPACE> / <CONTEXT>.
+      const nsOdd = !!ns0 && !ns;
+      const ctxOdd = !!ctx0 && !explicitCtx;
+      const sessCtx = ctxOdd ? undefined : ctxBySession.get(ev.session);
+      const ctx = ctxOdd ? '<CONTEXT>' : explicitCtx || (sessCtx && sessCtx !== '(cloud)' ? sessCtx : null);
+      const local = !ctxOdd && isLocal(explicitCtx || (sessCtx === '(cloud)' ? null : sessCtx));
+      // A delete only clears what it can reach: same cluster (when both are known) and the same namespace,
+      // where no -n means the current one (as kubectl does), never "any".
+      const here = (f) => !nsOdd && !ctxOdd && (!ctx || !f.ctx || f.ctx === ctx) && (ns || null) === (f.ns || null);
+      // After get-credentials with a context we can't name: the teardown says which cluster to check, and --verify skips it.
+      const ctxUnknown = !ctx && sessCtx === '(cloud)' ? (hintBySession.get(ev.session) || 'the cluster the agent connected to') : null;
+      const base = { provider: 'k8s', time: ev.time, cwd: ev.cwd, session: ev.session, agent: ev.tool, status: 'left', failed: false, times: 1, ns: ns || null, ctx: ctx || null, command: simple, ...(ctxUnknown ? { ctxUnknown } : {}) };
 
       const add = (noun, rule, what, cost, name0, nsx0) => {
         if (local) { skippedLocal++; return; }
@@ -131,10 +174,12 @@ function k8sFindings(evs, addFinding, found) {
         const name = name0 && K8S_NAME.test(String(name0).replace(/\*$/, '')) ? name0 : null;
         const nsx = nsx0 && K8S_NAME.test(nsx0) ? nsx0 : null;
         const n = name || '(name not in the log)';
-        const nsv = nsx || ns || null;
-        addFinding(`k8s|${noun}|${nsv || 'default'}|${n}|${ctx || ''}${name ? '' : '|' + ev.time + '|' + rule}`, {
+        const odd = nsOdd || ctxOdd || (!!nsx0 && !nsx);
+        const nsv = nsx || (nsx0 ? '<NAMESPACE>' : ns || (nsOdd ? '<NAMESPACE>' : null));
+        addFinding(`k8s|${noun}|${nsv || 'default'}|${n}|${ctx || ''}${name && !odd ? '' : '|' + ev.time + '|' + rule}`, {
           ...base, rule, what, cost, gpu: false, name: nsv ? `${n} (ns ${nsv})` : n, k8sName: n, ns: nsv, nameUnknown: !name || /\*$/.test(n),
-          teardown: teardownFor(noun, name && !/\*$/.test(name) ? name : '<NAME>', nsv, ctx),
+          ...(odd ? { oddScope: true, note: 'the namespace or context has characters a shell would run as code, so the command shows <NAMESPACE> / <CONTEXT>: fill in the real one' } : {}),
+          teardown: checkCtx(teardownFor(noun, name && !/\*$/.test(name) ? name : '<NAME>', nsv, ctx), ctxUnknown),
         });
       };
 
@@ -150,7 +195,7 @@ function k8sFindings(evs, addFinding, found) {
         }
         if (verb === 'uninstall' || verb === 'delete' || verb === 'del' || verb === 'un') {
           const names = t0.slice(2).filter((x, j, a) => !x.startsWith('-') && !['-n', '--namespace', '--kube-context'].includes(a[j - 1]));
-          for (const f of found.values()) if (f.rule === 'helm-release' && f.status === 'left' && names.includes(f.k8sName) && (!ns || !f.ns || f.ns === ns)) f.status = 'cleaned';
+          for (const f of found.values()) if (f.rule === 'helm-release' && f.status === 'left' && names.includes(f.k8sName) && here(f)) f.status = 'cleaned';
         }
         continue;
       }
@@ -210,7 +255,7 @@ function k8sFindings(evs, addFinding, found) {
         // kubectl delete namespace X
         if (['namespace', 'namespaces', 'ns'].includes(rest[0])) {
           const gone = rest.slice(1).filter((x) => !x.startsWith('-'));
-          for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && f.ns && gone.includes(f.ns)) f.status = 'cleaned';
+          for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && !ctxOdd && f.ns && gone.includes(f.ns) && (!ctx || !f.ctx || f.ctx === ctx)) f.status = 'cleaned';
           continue;
         }
         // kubectl delete -f FILE  -> everything that file made
@@ -219,8 +264,9 @@ function k8sFindings(evs, addFinding, found) {
           const tg = rest[fIdx + 1];
           const abs = tg && tg !== '-' ? path.normalize(path.isAbsolute(tg) ? tg : path.join(cwd, tg)).replace(/[\\/]+$/, '') : null;
           const texts = tg === '-' ? docsInCmd : abs && files.has(abs) ? [files.get(abs)] : [...files].filter(([p]) => abs && p.startsWith(abs + path.sep)).map(([, c]) => c);
-          const names = new Set(texts.flatMap((x) => parseManifests(x).map((m) => m.name)));
-          for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && names.has(f.k8sName)) f.status = 'cleaned';
+          // Match kind and name: deleting Deployment "web" must not clear Service "web".
+          const keys = new Set(texts.flatMap((x) => parseManifests(x).map((m) => { const b = billable(m); return b ? `${b.rule}|${m.name}|${m.namespace || ns || ''}` : null; }).filter(Boolean)));
+          for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && !nsOdd && !ctxOdd && keys.has(`${f.rule}|${f.k8sName}|${f.ns || ''}`) && (!ctx || !f.ctx || f.ctx === ctx)) f.status = 'cleaned';
           continue;
         }
         // kubectl delete svc a b | svc/a ing/b
@@ -230,7 +276,7 @@ function k8sFindings(evs, addFinding, found) {
           if (x.includes('/')) {
             const [k, n] = x.split('/');
             const nn = KNOUN[k.toLowerCase()];
-            if (nn) for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && f.k8sName === n && (f.rule.endsWith(nn) || (nn === 'service' && f.rule === 'k8s-lb-service')) && (!ns || !f.ns || f.ns === ns)) f.status = 'cleaned';
+            if (nn) for (const f of found.values()) if (f.provider === 'k8s' && f.status === 'left' && f.k8sName === n && (f.rule.endsWith(nn) || (nn === 'service' && f.rule === 'k8s-lb-service')) && here(f)) f.status = 'cleaned';
             continue;
           }
           if (!noun) {
@@ -242,14 +288,14 @@ function k8sFindings(evs, addFinding, found) {
           for (const f of found.values()) {
             if (f.provider !== 'k8s' || f.status !== 'left' || f.k8sName !== x) continue;
             const fn = f.rule === 'k8s-lb-service' ? 'service' : f.rule.replace('k8s-', '');
-            if (noun.includes(fn) && (!ns || !f.ns || f.ns === ns)) f.status = 'cleaned';
+            if (noun.includes(fn) && here(f)) f.status = 'cleaned';
           }
         }
         if (noun && hasFlag(rest, ['--all'])) {
           for (const f of found.values()) {
             if (f.provider !== 'k8s' || f.status !== 'left') continue;
             const fn = f.rule === 'k8s-lb-service' ? 'service' : f.rule.replace('k8s-', '');
-            if (noun.includes(fn) && (hasFlag(rest, ['-A', '--all-namespaces']) || (ns || null) === (f.ns || null))) f.status = 'cleaned';
+            if (noun.includes(fn) && !nsOdd && !ctxOdd && (!ctx || !f.ctx || f.ctx === ctx) && (hasFlag(rest, ['-A', '--all-namespaces']) || (ns || null) === (f.ns || null))) f.status = 'cleaned';
           }
         }
       }
@@ -260,7 +306,7 @@ function k8sFindings(evs, addFinding, found) {
 
 // Read-only check for --verify.
 function k8sCheck(f) {
-  if (f.provider !== 'k8s' || !f.k8sName || f.nameUnknown) return null;
+  if (f.provider !== 'k8s' || !f.k8sName || f.nameUnknown || f.ctxUnknown || f.oddScope) return null;
   if (f.rule === 'helm-release') {
     const args = ['status', f.k8sName];
     if (f.ns) args.push('-n', f.ns);

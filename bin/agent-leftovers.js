@@ -36,6 +36,9 @@ Usage: agent-leftovers [options]     (or: npx github:ApahSaroj/agent-leftovers [
   --script        print a teardown script with every line commented out
   --json          machine-readable output (secrets in commands are masked)
   --brief         a few lines, or nothing when all is clear (for hooks and cron)
+  --exit-zero     exit 0 even when leftovers are found (errors still exit 2); the
+                  Claude Code hook uses it, since a SessionStart hook's output is only
+                  read when it exits 0
   --baseline      add everything listed now to ~/.agent-leftovers-ignore
   --no-ignore     don't apply .agent-leftovers-ignore
   --no-color      plain text
@@ -50,13 +53,14 @@ Expiry keys: expires, expiry, expires-at, delete-after, ttl (a date like 2026-11
 2026-11-07t18-00, a unix time, or a ttl like 4h / 3d counted from creation).
 Session keys: session, session-id, agent-session.
 
-Exit codes: 0 nothing left running, 1 leftovers found, 2 error or bad option.
+Exit codes: 0 nothing left running, 1 leftovers found, 2 error or bad option. The same
+for --brief, --script and --json; --exit-zero turns 1 into 0.
 `;
 
 function die(msg) { process.stderr.write(`agent-leftovers: ${msg}\n`); process.exit(2); }
 
 function parseArgs(argv) {
-  const o = { days: 30, daysSet: false, project: null, logs: [], all: false, json: false, script: false, verify: false, sweep: false, expired: false, tags: [], brief: false, baseline: false, ignore: true, color: !!process.env.FORCE_COLOR || (process.stdout.isTTY && !process.env.NO_COLOR) };
+  const o = { days: 30, daysSet: false, project: null, logs: [], all: false, json: false, script: false, verify: false, sweep: false, expired: false, tags: [], brief: false, exitZero: false, baseline: false, ignore: true, color: !!process.env.FORCE_COLOR || (process.stdout.isTTY && !process.env.NO_COLOR) };
   const days = (v, a) => { const n = Number(v); if (!(n > 0) || !Number.isFinite(n)) die(`${a} must be a positive number`); o.days = n; o.daysSet = true; };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -74,6 +78,7 @@ function parseArgs(argv) {
     else if (a === '--script') o.script = true;
     else if (a === '--verify') o.verify = true;
     else if (a === '--brief') o.brief = true;
+    else if (a === '--exit-zero') o.exitZero = true;
     else if (a === '--sweep') o.sweep = true;
     else if (a === '--expired') o.expired = true;
     else if (a === '--tag') o.tags.push(val());
@@ -122,8 +127,11 @@ function main() {
   if (opts.expired || opts.tags.length) {
     const { matchesTags } = require('../src/tags');
     result.filter = [opts.expired ? 'expired' : null, ...opts.tags.map((x) => `tag ${x}`)].filter(Boolean).join(', ');
+    // What the filter hid, so an empty filtered view doesn't read as "nothing left running".
+    const before = result.resources.filter((r) => r.status === 'left').length + result.spend.length;
     result.resources = result.resources.filter((r) => (!opts.expired || r.expired) && matchesTags(r, opts.tags));
     result.spend = [];
+    result.filteredOut = before - result.resources.filter((r) => r.status === 'left').length;
   }
   if (opts.sweep) {
     if (!opts.json && !opts.script && !opts.brief) process.stderr.write('Sweeping gcloud, aws and az for expired tags (read-only list calls)...\n');
@@ -141,16 +149,18 @@ function main() {
     console.log(b.added ? `Added ${b.added} item${b.added === 1 ? '' : 's'} to ${b.file}. They won't be listed again.` : 'Nothing open to add.');
     return;
   }
-  if (opts.brief) { const s = report.brief(result); if (s) console.log(s); return; }
+  // Exit codes are the same for every output form: 0 nothing left running, 1 leftovers found.
+  const code = open > 0 && !opts.exitZero ? 1 : 0;
+  if (opts.brief) { const s = report.brief(result); if (s) console.log(s); process.exitCode = code; return; }
   if (opts.json) {
     console.log(JSON.stringify({ version: pkg.version, days: opts.days, ...result, unreadable: skipped.unreadable }, null, 2));
-    process.exitCode = open > 0 ? 1 : 0;
+    process.exitCode = code;
     return;
   }
-  if (opts.script) { console.log(report.script(result)); return; }
+  if (opts.script) { console.log(report.script(result)); process.exitCode = code; return; }
   console.log(report.text(result, opts));
   if (skipped.zst) console.log(`(${skipped.zst} older compressed Codex logs skipped: needs Node 22.15 or newer)`);
-  process.exitCode = open > 0 ? 1 : 0;
+  process.exitCode = code;
 }
 
 try { main(); } catch (e) {

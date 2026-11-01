@@ -57,12 +57,16 @@ function listFlag(t, name) {
 
 function makeOrphans(idx, addFinding, addScope) {
   const attached = new Map(); // volume id -> { instance, time }
-  const last = (rule, name) => { const l = idx.named(rule, name); return l.length ? l[l.length - 1] : null; };
+  let usc = {}; let same = () => true; let done = 'cleaned';
+  // The newest same-named create in the delete's project/zone/group, not just the newest by name.
+  const last = (rule, name) => { const l = idx.named(rule, name).filter((f) => same(f.scope, usc)); return l.length ? l[l.length - 1] : null; };
+  const where = (sc) => ['project', 'zone', 'subscription', 'resourceGroup'].map((k) => (sc && sc[k]) || '').join('/');
 
-  return function orphanSimple(t0, simple, ev) {
+  return function orphanSimple(t0, simple, ev, sc, sameScope, uncertain) {
+    usc = sc || {}; same = sameScope || (() => true); done = uncertain ? 'maybe-cleaned' : 'cleaned';
     const base = { time: ev.time, cwd: ev.cwd, session: ev.session, agent: ev.tool, status: 'left', failed: false, times: 1, command: simple, orphan: true };
     const add = (key, parent, f) => {
-      const scope = (parent && parent.scope) || {};
+      const scope = { ...usc, ...((parent && parent.scope) || {}) };
       const o = { ...base, ...f, scope, teardown: addScope ? addScope(f.teardown, f.provider, scope) : f.teardown };
       // A kept disk carries its VM's session and expiry tags, so --tag / --expired find it too.
       if (parent && parent.tags) annotate(o, parent.tags, parent.time);
@@ -78,19 +82,20 @@ function makeOrphans(idx, addFinding, addScope) {
         if (isVar(vm)) continue;
         const parent = last('gcp-vm', vm);
         const pc = parent ? parent.command : '';
-        const z = zone || (parent && flag(tokenize(pc), ['--zone']));
+        const z0 = zone || (parent && flag(tokenize(pc), ['--zone']));
+        const z = z0 && SAFE.test(z0) ? z0 : null; // a zone goes into a command: plain words only
         const zf = z ? ` --zone ${z}` : '';
         const list = `gcloud compute disks list --filter="-users:*"${z ? ` --zones ${z}` : ''}`;
         if (keep) {
-          add(`gcp-kept-disk|${vm}|${keep}`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept disk (VM deleted)', cost: 'hourly', name: `${vm} (${keep} disk${keep === 'all' ? 's' : ''})`, nameUnknown: false,
+          add(`gcp-kept-disk|${vm}|${keep}|${where(parent ? parent.scope : usc)}`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept disk (VM deleted)', cost: 'hourly', name: `${vm} (${keep} disk${keep === 'all' ? 's' : ''})`, nameUnknown: false,
             diskName: keep === 'boot' ? vm : null, vm,
             teardown: `${list}   # unattached disks; then: gcloud compute disks delete <DISK>${zf}`,
             note: `the delete ran with --keep-disks=${keep}, so the ${keep === 'all' ? 'disks' : keep + ' disk'} kept billing after ${vm} was gone` });
         }
         const boot = parent && keep !== 'boot' && keep !== 'all' ? bootKept(pc) : null;
         if (boot) {
-          const dn = boot.name && SAFE.test(boot.name) ? boot.name : vm;
-          add(`gcp-kept-disk|${vm}|boot`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept boot disk', cost: 'hourly', name: vm, nameUnknown: false, diskName: dn, vm,
+          const dn = boot.name && SAFE.test(boot.name) ? boot.name : SAFE.test(vm) ? vm : '<DISK>';
+          add(`gcp-kept-disk|${vm}|boot|${where(parent.scope)}`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept boot disk', cost: 'hourly', name: vm, nameUnknown: false, diskName: dn, vm,
             teardown: `gcloud compute disks delete ${dn}${zf}   # asks before deleting; check the name first: ${list}`,
             note: `${vm} was created with auto-delete off for its boot disk, so deleting the VM left the disk` });
         }
@@ -98,7 +103,7 @@ function makeOrphans(idx, addFinding, addScope) {
         if (data.length) {
           const named = data.map((d) => d.name).filter((n) => n && SAFE.test(n));
           const one = data.length === 1 && named.length === 1 ? named[0] : null;
-          add(`gcp-kept-disk|${vm}|data`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept data disk', cost: 'hourly', name: `${vm} (data disk${data.length > 1 ? 's' : ''})`, nameUnknown: false,
+          add(`gcp-kept-disk|${vm}|data|${where(parent.scope)}`, parent, { rule: 'gcp-kept-disk', provider: 'gcloud', what: 'Kept data disk', cost: 'hourly', name: `${vm} (data disk${data.length > 1 ? 's' : ''})`, nameUnknown: false,
             diskName: one, diskNames: named, vm,
             teardown: one ? `gcloud compute disks delete ${one}${zf}   # asks before deleting` : `${list}   # unattached disks; then: gcloud compute disks delete <DISK>${zf}`,
             note: `${vm} had ${data.length > 1 ? 'disks' : 'a disk'} with auto-delete=no${named.length ? ` (${named.join(', ')})` : ''}, so deleting the VM left ${data.length > 1 ? 'them' : 'it'}` });
@@ -114,11 +119,11 @@ function makeOrphans(idx, addFinding, addScope) {
     if (t) {
       const names = gnames(t, 4).filter((n) => n && !isVar(n));
       for (const f of idx.rule('gcp-kept-disk')) {
-        if (f.status !== 'left') continue;
+        if (f.status !== 'left' || !same(f.scope, usc)) continue;
         if (f.diskNames && f.diskNames.length > 1) {
           f.diskNames = f.diskNames.filter((n) => !names.includes(n));
-          if (!f.diskNames.length) f.status = 'cleaned';
-        } else if (f.diskName && names.includes(f.diskName)) f.status = 'cleaned';
+          if (!f.diskNames.length) f.status = done;
+        } else if (f.diskName && names.includes(f.diskName)) f.status = done;
         else if (!f.diskName && names.length && !/disks delete ran/.test(f.note || '')) {
           f.note = `${f.note || ''}. A disks delete ran later (${names.join(', ')}); if that was this disk it is gone, so check before deleting`;
         }
@@ -193,8 +198,13 @@ function makeOrphans(idx, addFinding, addScope) {
     }
     t = matchPrefix(t0, ['az', 'group', 'delete']);
     if (t) {
-      const rg = flag(t, ['--name', '-n', '--resource-group', '-g']);
-      if (rg) for (const f of idx.rule('az-vm-orphans')) if (f.status === 'left' && f.resourceGroup === rg) f.status = 'cleaned';
+      const rg = (flag(t, ['--name', '-n', '--resource-group', '-g']) || '').toLowerCase();
+      // Deleting a group deletes everything in it (Azure names are case-insensitive).
+      if (rg) for (const f of idx.prov('az')) {
+        if (f.status !== 'left' || !same(f.scope, usc)) continue;
+        const g = f.rule === 'az-vm-orphans' ? String(f.resourceGroup).toLowerCase() : f.rule === 'az-group' ? null : f.scope && f.scope.resourceGroup;
+        if (g === rg) f.status = done;
+      }
       return;
     }
     // Deleting the default-named parts one by one (exact names only).

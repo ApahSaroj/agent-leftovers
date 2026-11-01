@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/agent-leftovers.js\" --brief --days 14",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/agent-leftovers.js\" --brief --days 14 --exit-zero",
             "timeout": 30
           }
         ]

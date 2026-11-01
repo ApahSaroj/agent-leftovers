@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.4.2 (2026-11-01)
+
+From three outside reviews of 0.4.1 (matching, log readers, teardown commands) and a fresh-eyes
+review of 0.4.2 itself. Every reproduced issue is now a regression test: 340 new tests, 585 in total
+(338 after round 1, 403 after round 2, 585 after the fresh review), and every teardown the tests
+produce (363) is checked with `bash -n`.
+
+**Note:** `--brief` and `--script` now exit 1 when leftovers are found, as the help always said
+(they exited 0). Hooks that only read output on exit 0 should add the new `--exit-zero`; the
+Claude Code plugin's SessionStart hook does.
+
+**Note:** teardowns now come as up to three parts: the command to run (`teardown`, with no `#`
+comment and no `&&`), a hint (`teardownHint`: what to check, what to run next) and, for tools with
+no folder flag, the folder to run it in (`runIn`). The text report prints them on separate lines
+(`run in:`, `turn off:`, `hint:`), `--script` prints hints as `## hint:` lines that stay comments,
+and `--json` has the three fields. Before, everything was one line with a trailing `# note`.
+
+**Note:** the same name in two zones, regions, resource groups, subscriptions or gcloud
+accounts/configurations now shows as two rows. Before, they were merged into one.
+
+**Fixes for things hidden while they still billed**
+- A delete now clears only the resource in the same zone or region, Azure resource group (names
+  compared case-insensitively), ECS cluster, Heroku app, Kubernetes context and namespace, and the
+  same MCP parent (a Neon branch in project p1 is not cleared by a delete in p2).
+- `gcloud config set core/project`, `gcloud beta` with an inline `CLOUDSDK_CORE_PROJECT=`, and a failed
+  `az account set` are handled correctly.
+- `cd infra && terraform destroy` (and compose, serverless and so on) is matched to the right folder.
+- Counted only as "maybe" now: a delete on a failed command line, inside a failed script, from
+  another MCP server of the same provider, or on a `$VAR` name from another session.
+- An EC2 terminate with a known, different instance ID no longer touches other instances.
+- `kubectl delete -f` matches kind and namespace, not just the name.
+- Kept GCP disks and Azure VM leftovers are matched in their own project, zone and subscription.
+- `az group delete` also clears the VMs and databases made in that group.
+- `bash -c "..."` and scripts that fail partway are now read.
+- `gcloud storage buckets describe/update/...` and `fly apps list` no longer count as deletes.
+- A timed-out or interrupted create is listed (marked "uncertain") instead of hidden as failed.
+
+**Safety fixes in teardown commands**
+- Names from the logs can no longer run as shell code: a name with shell characters becomes
+  `<NAME>` (with a note); folders in `cd` and odd flag values are single-quoted.
+- MCP deployments: the Vercel teardown removes only a deployment id or URL, with `--safe`, never the
+  project; Netlify never offers `sites:delete` for a deploy. Both are marked as deploys.
+- `serverless remove` keeps `--stage`, `--region` and `--aws-profile`.
+- `sam`, `cdk` and `eksctl` teardowns carry the profile and region.
+- kubectl/helm teardowns carry `--context` after GKE or AKS `get-credentials` (or an EKS `--alias`),
+  and `--verify` asks that context. When it can't be named, the teardown asks you to check
+  `kubectl config current-context` first and `--verify` skips the item.
+- Docker Compose keeps `-p` and every `-f`; `docker-compose -f FILE up -d` is now found.
+- Terraform with `TF_WORKSPACE` gives valid shell and keeps the workspace.
+- Smaller: GKE `--location`, `fly machine destroy --force -a APP`, `supabase functions delete --project-ref`,
+  `--verify` reads quoted flag values, no `(new app)` placeholders, R2 `--jurisdiction`, `pulumi -C`,
+  Railway no longer suggests `railway down` as a delete, Heroku add-on by add-on name, Aurora members
+  without a final snapshot.
+
+**Log support**
+- Claude Code `PowerShell` tool; Codex `powershell -Command` / `pwsh` / `cmd /c` calls; Gemini
+  subagent chats; `~/.config/claude/projects`; Claude Desktop agent-mode folder (path from a
+  third-party source, unverified).
+- Background runs via `run_in_background`, Gemini `is_background` and Copilot `detach` are listed.
+- The same tool call in two files is counted once; a UTF-8 BOM no longer drops a line or a file;
+  Codex output given as an array is read.
+- The text report and `--script` print the "uncertain" note.
+
+**New coverage:** GKE node pools, eksctl node groups, AKS node pools, `aws cloudformation deploy` /
+`create-stack`, `sst deploy`.
+
+**Round 2 (same release)**
+- Windows: teardowns paste into cmd.exe and Windows PowerShell 5.1. The `# note` is a separate field
+  and line; `cd DIR && ...` became `terraform -chdir=DIR`, `docker compose --project-directory DIR`
+  (with absolute `-f` paths) and `pulumi --cwd DIR`, or a separate `run in:` folder for tools with no
+  such flag (serverless, railway, wrangler, fly, sam, cdk). On Windows, words with spaces use double
+  quotes, `%`/`$` names become `<NAME>`, `TF_WORKSPACE=`/`AWS_REGION=` prefixes move to the hint with
+  the `set` / `$env:` form, and ngrok, cloudflared, background processes and ssh tunnels are found with
+  `Get-CimInstance` through `powershell -NoProfile -Command` and stopped with `taskkill /PID`
+  (`pgrep` / `kill` elsewhere). `docker run` teardowns no longer chain `docker stop && docker rm`.
+- Cost estimates: `gcloud compute disks create --size 2TB` is 2048 GB (was read as 2 GB); `pd-balanced`
+  is $0.10/GB-month (was priced as SSD); default disk size is 100 GB for non-standard types; `az vm create`
+  without `--size` is `Standard_D2s_v5`, the Azure CLI default (was `Standard_DS1_v2`, unpriced); EBS
+  volumes default to `gp2` and read `--volume-type`.
+- `gcloud config set compute/zone` / `compute/region` (and `CLOUDSDK_COMPUTE_ZONE/REGION`, `config unset`,
+  `configurations activate`) are tracked per session: zonal VMs, disks, TPUs and GKE clusters, and
+  regional static IPs, get that zone/region in their scope and their teardown.
+- Bucket deletes are credited across sibling rules: `gsutil mb` + `gcloud storage buckets delete` /
+  `gcloud storage rm -r`, `gcloud storage buckets create` + `gsutil rb`, `aws s3 mb` + `aws s3api
+  delete-bucket`, `aws s3api create-bucket` + `aws s3 rb`. A rule can now have several undo patterns.
+- `--version VALUE` (tpu-vm runtime, helm chart version) no longer hides a create as "prints a version".
+- New coverage, each with its teardown and its delete: Cloud TPU VMs, Vertex AI Workbench (and legacy
+  user-managed notebooks), SageMaker notebook instances (stop, then delete), Azure ML compute, Bedrock
+  provisioned throughput (warns about commitment terms), Azure OpenAI / AI Services deployments
+  (hourly when provisioned) and accounts (soft-delete purge), ALB/NLB, interface VPC endpoints,
+  ElastiCache replication groups and serverless caches, OpenSearch domains (and legacy `es`) and
+  Serverless collections, Redshift clusters and Serverless workgroups, Lightsail instances,
+  `doctl` Droplets, managed databases and Kubernetes clusters, Azure Container Instances, VM scale sets,
+  Azure Cache for Redis, Cosmos DB, Azure SQL servers and databases, `ssh -f` port-forward tunnels,
+  `tailscale funnel`, `podman run -d`. TPUs, Bedrock provisioned throughput and provisioned Azure
+  OpenAI deployments are marked `ACCEL, HOURLY` and listed with GPUs at the top. Hourly estimates
+  added for ALB/NLB and interface endpoints.
+
+**Fresh review (same release)**
+- Creates hidden behind a wrapper are found: `timeout 900 …`, `nohup`, `setsid`, `nice -n N`,
+  `stdbuf`, `aws-vault exec P -- …`, `doppler run -- …`, `op run -- …`, `dotenv -- …`,
+  `pnpm|yarn|npm exec [--] …`, `bun x …`, `env -u X …`, `sudo -u USER -E …`, `time -p …`.
+- Shell syntax no longer hides a create: `if …; then …; fi`, `for …; do …; done`, `( … )`, `{ …; }`,
+  `! cmd`. `(cd infra && terraform apply)` is matched to `infra`, and the `cd` ends at the `)`.
+- `bash -lc '…'` (and `-ec`, `-xc`, `sh`, `dash`, `ksh`) is unwrapped like `bash -c`.
+- `docker run -h HOST` (and `psql`/`mysql`/`redis-cli -h`) is no longer read as `--help`.
+- `docker compose up` and `docker run` without `-d`, sent to the background with `&` or the agent's
+  background flag, are listed, as the 0.4.2 notes already promised.
+- `./scripts/up.sh` the agent wrote is read from `scripts/`, never from a different `./up.sh`.
+- Process lookups (`pgrep -af WORD`, and the PowerShell `-match 'WORD'` on Windows) only ever contain
+  plain characters: `$( )`, backticks and quotes from a log become `.` and a leading `-` can't become
+  a flag. Background-process words come from the script, or from `python -m MODULE`
+  (`python3 -m http.server &` looks up `http.server`, not every python3).
+- EC2 teardowns put `--region` after the whole `--filters Name=…,Values=running` argument (it was
+  inserted inside it, which AWS rejects).
+- `kubectl --context` / `-n` and `helm -n` values with shell characters become `<CONTEXT>` /
+  `<NAMESPACE>` with a note (they were dropped, pointing the teardown at the current context or
+  namespace), `--verify` skips those items, and a delete with such a value clears nothing.
+- `grep -rn nohup …`, `ps aux | grep nohup` and similar are no longer background processes.
+- `terraform apply -refresh-only` is not a create.
+- `pkill -f PAT`, `pkill NAME`, `killall NAME` and `kill $(pgrep -f X)` after a background start in the
+  same session mark it cleaned; a bare `kill %1` / `kill $!` / `kill PID` marks it "maybe".
+- A cloud create sent to the background (`gcloud … create vm &`) is one row (the VM), not also a
+  background process called `gcloud`.
+- Very long log lines (inline images, pasted files) are read in linear time: 80 MB took 17 s and
+  300 MB never finished; now about 1 s and 2 s.
+- `--brief`, `--script` (and `--json`, text) use the documented exit codes; new `--exit-zero`.
+- `--expired` / `--tag` with no match say "Nothing matches the filter (…)" and how many other items it
+  hid, instead of "Nothing left running".
+- README: says where `--force` is used (`fly machine destroy <ID> --force`, which Fly requires for a
+  running machine) instead of "no `--force`".
+
+## 0.4.1 (2026-11-01)
+
+- Fix: a delete now clears only the resource in the same project, account, profile, region or subscription. Before, deleting VM "web" in project A also marked "web" in project B as cleaned. Reported on X. 4 regression tests (245 total).
+
 ## 0.4.0 (2026-10-31)
 
 - Every teardown carries the account it was created in: gcloud --project, --account and --configuration (from flags, env, `gcloud config set`, `configurations activate`), aws --profile/--region, az --subscription. When the log never shows the account, the report says so and gives the check command (`gcloud config list`, `aws sts get-caller-identity`, `az account show`). Thanks @MankyRivet and @h2oilx.

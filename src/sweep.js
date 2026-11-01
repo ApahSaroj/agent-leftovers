@@ -93,6 +93,7 @@ function sweep({ timeoutMs = 30000, wantTags = [], nowMs = Date.now(), env = pro
       // Same masking as the rest of the output (tags and names can hold secrets).
       it.tags = redactArgs(it.tags);
       if (typeof it.name === 'string') it.name = redact(it.name);
+      require('./teardown').applySplit(it);
       items.push(it);
     }
   }

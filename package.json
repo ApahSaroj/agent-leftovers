@@ -1,6 +1,6 @@
 {
   "name": "agent-leftovers",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "description": "See every cloud resource, container and background process your AI coding agent left running, with the command to turn each off, including disks and IPs left after a delete and anything past its expiry tag. Reads Claude Code, Codex, Gemini CLI and Copilot CLI logs locally. Optional read-only --verify.",
   "bin": {
     "agent-leftovers": "bin/agent-leftovers.js"

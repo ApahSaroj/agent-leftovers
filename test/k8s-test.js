@@ -80,7 +80,7 @@ function makeK8s(root) {
   const dir = path.join(root, '.claude', 'projects', '-home-dev-code-shop');
   fs.mkdirSync(dir, { recursive: true });
   claudeLog(path.join(dir, 'k8s-cloud.jsonl'), 'k8s-cloud', cwd, [
-    { cmd: 'gcloud container clusters get-credentials shop-prod --zone us-central1-a' },
+    { cmd: 'gcloud container clusters get-credentials shop-prod --zone us-central1-a --project shop' },
     { write: `${cwd}/k8s/web.yaml`, content: WEB },
     { cmd: 'kubectl apply -f k8s/web.yaml' },
     { cmd: 'kubectl expose deployment api --type=LoadBalancer --port 80 -n shop' },
@@ -132,10 +132,11 @@ module.exports = function k8sTests(t, bin, baseEnv) {
   t('LoadBalancer Service read from the manifest the agent wrote', () => {
     const r = by('k8s-lb-service', 'web-lb');
     assert.ok(r && r.status === 'left' && r.cost === 'hourly');
-    assert.strictEqual(r.teardown, 'kubectl delete service web-lb -n shop   # releases the cloud load balancer');
+    assert.strictEqual(r.teardown, 'kubectl delete service web-lb -n shop --context gke_shop_us-central1-a_shop-prod');
+    assert.strictEqual(r.teardownHint, 'releases the cloud load balancer');
   });
   t('ClusterIP Service and Deployment ignored', () => { assert.ok(!by('k8s-lb-service', 'web-internal')); assert.ok(!k.some((r) => r.k8sName === 'web')); });
-  t('PVC from the same file flagged as a disk', () => { const r = by('k8s-pvc', 'web-data'); assert.ok(r && r.status === 'left' && /Retain/.test(r.teardown)); });
+  t('PVC from the same file flagged as a disk', () => { const r = by('k8s-pvc', 'web-data'); assert.ok(r && r.status === 'left' && /Retain/.test(r.teardownHint)); });
   t('kubectl expose --type=LoadBalancer', () => assert.ok(by('k8s-lb-service', 'api').teardown.includes('-n shop')));
   t('heredoc Ingress via apply -f -', () => assert.strictEqual(by('k8s-ingress', 'site-ing').status, 'left'));
   t('helm ingress-nginx = hourly load balancer', () => { const r = by('helm-release', 'ingress-nginx'); assert.ok(r && r.cost === 'hourly' && r.what === 'Helm release + LB'); assert.ok(r.teardown.startsWith('helm uninstall ingress-nginx -n ingress-nginx')); });
@@ -150,7 +151,7 @@ module.exports = function k8sTests(t, bin, baseEnv) {
   const left = k.filter((r) => r.status === 'left').map((r) => r.k8sName).sort();
   t('k8s left = 6', () => assert.deepStrictEqual(left, ['api', 'ingress-nginx', 'public-gw', 'site-ing', 'web-data', 'web-lb']));
   const txt = run([]).stdout;
-  t('text output shows the k8s rows', () => { assert.ok(/K8s LoadBalancer Service/.test(txt)); assert.ok(/kubectl delete service web-lb -n shop/.test(txt)); });
+  t('text output shows the k8s rows', () => { assert.ok(/K8s LoadBalancer Service/.test(txt)); assert.ok(/kubectl delete service web-lb -n shop --context gke_shop_us-central1-a_shop-prod/.test(txt)); });
 
   // --verify with fake kubectl/helm
   const fb = path.join(home, 'fakebin');

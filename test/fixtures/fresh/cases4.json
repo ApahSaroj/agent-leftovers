@@ -1,0 +1,13 @@
+{
+  "k8s-ns-before-verb": ["kubectl -n shop expose deployment web --type=LoadBalancer --port 80"],
+  "k8s-ns-after": ["kubectl expose deployment web --type=LoadBalancer --port 80 -n shop"],
+  "k8s-ctx-before": ["kubectl --context prod-east expose deployment web --type=LoadBalancer --port 80"],
+  "k8s-ctx-after": ["kubectl expose deployment web --type=LoadBalancer --port 80 --context prod-east"],
+  "k8s-apply-ns-before": ["cat <<'EOF' | kubectl -n shop apply -f -\napiVersion: v1\nkind: Service\nmetadata:\n  name: lb1\nspec:\n  type: LoadBalancer\n  ports:\n  - port: 80\nEOF"],
+  "k8s-delete-ns-mismatch": ["kubectl -n shop expose deployment web --type=LoadBalancer --port 80", "kubectl delete svc web"],
+  "k8s-ns-env": ["kubectl config set-context --current --namespace=shop", "kubectl expose deployment web --type=LoadBalancer --port 80"],
+  "helm-ns-before": ["helm -n db install pg bitnami/postgresql"],
+  "helm-kube-context": ["helm install pg bitnami/postgresql --kube-context prod-east"],
+  "kubectl-use-context": ["kubectl config use-context prod-east", "kubectl expose deployment web --type=LoadBalancer --port 80"],
+  "kubectl-pvc": ["kubectl apply -f pvc.yaml"]
+}

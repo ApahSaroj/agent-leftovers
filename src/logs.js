@@ -22,11 +22,19 @@ function defaultRoots() {
     const main = home === os.homedir();
     const claudeDir = (main && process.env.CLAUDE_CONFIG_DIR) || path.join(home, '.claude');
     roots.push({ tool: 'claude', dir: path.join(claudeDir, 'projects') });
+    if (main && !process.env.CLAUDE_CONFIG_DIR) {
+      // XDG location some installs use, and Claude Desktop's agent-mode sessions.
+      roots.push({ tool: 'claude', dir: path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'claude', 'projects') });
+      const desk = process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Claude')
+        : process.platform === 'win32' ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Claude')
+        : path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Claude');
+      roots.push({ tool: 'claude', dir: path.join(desk, 'local-agent-mode-sessions'), match: /[\\/]projects[\\/].+\.jsonl$/ });
+    }
     const codexHome = (main && process.env.CODEX_HOME) || path.join(home, '.codex');
     roots.push({ tool: 'codex', dir: path.join(codexHome, 'sessions') });
     roots.push({ tool: 'codex', dir: path.join(codexHome, 'archived_sessions') });
     const geminiHome = (main && process.env.GEMINI_CLI_HOME) ? path.join(process.env.GEMINI_CLI_HOME, '.gemini') : path.join(home, '.gemini');
-    roots.push({ tool: 'gemini', dir: path.join(geminiHome, 'tmp'), match: /[\\/]chats[\\/][^\\/]+\.jsonl?$/ });
+    roots.push({ tool: 'gemini', dir: path.join(geminiHome, 'tmp'), match: /[\\/]chats[\\/](?:[^\\/]+[\\/])?[^\\/]+\.jsonl?$/ });
     const copilotHome = (main && process.env.COPILOT_HOME) || path.join(home, '.copilot');
     roots.push({ tool: 'copilot', dir: path.join(copilotHome, 'session-state'), match: /\.jsonl$/ });
   }
@@ -58,6 +66,7 @@ function sniff(file) {
     fs.closeSync(fd);
     head = buf.slice(0, n).toString('utf8');
   } catch { return null; }
+  head = head.replace(/^\uFEFF/, '');
   if (/"session_meta"|"response_item"|"function_call"|"local_shell_call"/.test(head)) return 'codex';
   if (/"type"\s*:\s*"session\.start"|"tool\.execution_start"|"copilotVersion"/.test(head)) return 'copilot';
   if (/"projectHash"|"type"\s*:\s*"gemini"|"toolCalls"/.test(head)) return 'gemini';
@@ -73,10 +82,22 @@ function findLogs({ sinceMs, extra = [] }) {
       const list = st.isDirectory() ? walk(p, [], sinceMs, /\.jsonl(\.zst)?$|[\\/]chats[\\/][^\\/]+\.json$/) : [p];
       for (const f of list) { const tool = sniff(f); if (tool) files.push({ tool, file: f }); }
     }
-    return files;
+    return dropShadowed(files);
   }
-  for (const r of defaultRoots()) for (const f of walk(r.dir, [], sinceMs, r.match)) files.push({ tool: r.tool, file: f });
-  return files;
+  const seenDir = new Set();
+  for (const r of defaultRoots()) {
+    const key = path.resolve(r.dir);
+    if (seenDir.has(key)) continue;
+    seenDir.add(key);
+    for (const f of walk(r.dir, [], sinceMs, r.match)) files.push({ tool: r.tool, file: f });
+  }
+  return dropShadowed(files);
+}
+// Codex keeps rollout.jsonl and rollout.jsonl.zst side by side while it re-materializes one;
+// Gemini leaves session.json beside the session.jsonl it migrated it to. Read one copy.
+function dropShadowed(files) {
+  const have = new Set(files.map((f) => f.file));
+  return files.filter(({ file }) => !(file.endsWith('.jsonl.zst') && have.has(file.slice(0, -4))) && !(file.endsWith('.json') && have.has(file + 'l')));
 }
 
 const zlib = require('zlib');
@@ -95,32 +116,40 @@ function eachLine(file, fn) {
   let fd;
   try { fd = fs.openSync(file, 'r'); } catch (e) { skipped.unreadable.push(`${file}: ${e.code || e.message}`); return; }
   const CH = 1 << 20;
-  const buf = Buffer.alloc(CH);
-  let rest = Buffer.alloc(0);
+  // Pieces of the current (unfinished) line: joined once at its newline, never re-copied or
+  // re-scanned per chunk (that was quadratic: an 80 MB line took 17 s, 300 MB never finished).
+  let parts = [];
+  let partLen = 0;
+  let skipping = false;
   try {
     for (;;) {
+      const buf = Buffer.allocUnsafe(CH);
       const n = fs.readSync(fd, buf, 0, CH, null);
       if (n <= 0) break;
-      let chunk = Buffer.concat([rest, buf.subarray(0, n)]);
+      const chunk = buf.subarray(0, n);
       let start = 0;
-      for (let i = 0; i < chunk.length; i++) {
-        if (chunk[i] === 10) { parseLine(chunk.subarray(start, i), fn); start = i + 1; }
+      let i;
+      while ((i = chunk.indexOf(10, start)) !== -1) {
+        if (!skipping) { parts.push(chunk.subarray(start, i)); parseLine(parts.length === 1 ? parts[0] : Buffer.concat(parts), fn); }
+        parts = []; partLen = 0; skipping = false; start = i + 1;
       }
-      rest = Buffer.from(chunk.subarray(start));
-      if (rest.length > 256 * CH) { skipped.unreadable.push(`${file}: a single line over 256 MB was skipped`); rest = Buffer.alloc(0); }
+      if (start < n && !skipping) { parts.push(chunk.subarray(start)); partLen += n - start; }
+      if (partLen > 256 * CH) { skipped.unreadable.push(`${file}: a single line over 256 MB was skipped`); parts = []; partLen = 0; skipping = true; }
     }
-    if (rest.length) parseLine(rest, fn);
+    if (parts.length && !skipping) parseLine(parts.length === 1 ? parts[0] : Buffer.concat(parts), fn);
   } catch (e) { skipped.unreadable.push(`${file}: ${e.code || e.message}`); }
   finally { try { fs.closeSync(fd); } catch { /* closed */ } }
 }
 function eachLineOfBuffer(buf, fn) {
   let start = 0;
-  for (let i = 0; i < buf.length; i++) if (buf[i] === 10) { parseLine(buf.subarray(start, i), fn); start = i + 1; }
+  let i;
+  while ((i = buf.indexOf(10, start)) !== -1) { parseLine(buf.subarray(start, i), fn); start = i + 1; }
   if (start < buf.length) parseLine(buf.subarray(start), fn);
 }
 function parseLine(b, fn) {
   if (!b.length) return;
-  const line = b.toString('utf8');
+  let line = b.toString('utf8');
+  if (line.charCodeAt(0) === 0xfeff) line = line.slice(1);
   if (!line.trim()) return;
   let o;
   try { o = JSON.parse(line); } catch { return; }
@@ -142,8 +171,8 @@ function parseClaude(file) {
       if (c && c.type === 'tool_use' && c.input) {
         const base = { time: o.timestamp || null, cwd: o.cwd || null, session, tool: 'claude' };
         const name = String(c.name || '');
-        if (/^(Bash|bash|BashOutput|shell)$/.test(name) && typeof c.input.command === 'string') {
-          const ev = { kind: 'cmd', command: c.input.command, id: c.id, failed: false, ...base };
+        if (/^(Bash|bash|PowerShell|powershell|shell)$/.test(name) && typeof c.input.command === 'string') {
+          const ev = { kind: 'cmd', command: c.input.command, id: c.id, failed: false, background: c.input.run_in_background === true, ...base };
           events.push(ev); if (c.id) byId.set(c.id, ev);
         } else if (name === 'Write' && c.input.file_path) {
           events.push({ kind: 'write', file: c.input.file_path, content: String(c.input.content || ''), ...base });
@@ -160,13 +189,18 @@ function parseClaude(file) {
         const ev = byId.get(c.tool_use_id);
         if (ev.kind === 'mcp') { ev.result = c.content; if (c.is_error === true) ev.failed = true; continue; }
         const text = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || '');
-        if (c.is_error === true || /^Exit code [1-9]/m.test(text)) ev.failed = true;
+        // A timeout or an interrupt kills the local CLI, not the cloud operation it started.
+        if (UNCERTAIN.test(text.slice(0, 2000))) ev.uncertain = true;
+        else if (c.is_error === true || /^Exit code [1-9]/m.test(text)) ev.failed = true;
         noteIds(ev, text);
       }
     }
   });
   return events;
 }
+
+// Results that mean "stopped waiting", not "the create failed".
+const UNCERTAIN = /^Command timed out after|\[Request interrupted by user|^The operation was aborted|was cancelled by user|^Exit code:? (124|143)\b|"exit_code":\s*124\b/m;
 
 // Instance IDs printed by `aws ec2 run-instances`, so a later terminate can be matched exactly.
 function noteIds(ev, text) {
@@ -182,7 +216,7 @@ function cmdFromArgs(a) {
   let c = a.command !== undefined ? a.command : a.cmd;
   if (Array.isArray(c)) {
     // ["bash","-lc","..."] -> the script; otherwise join argv
-    const i = c.findIndex((x) => x === '-lc' || x === '-c');
+    const i = c.findIndex((x) => /^(-l?c|-Command|\/c)$/i.test(String(x)));
     c = i >= 0 && c[i + 1] ? c[i + 1] : c.join(' ');
   }
   return typeof c === 'string' ? { command: c, cwd: a.workdir || a.cwd || null } : null;
@@ -264,6 +298,8 @@ function parseCodex(file) {
       }
       let out = o.output;
       let code = null;
+      if (Array.isArray(out)) out = out.map((p) => (p && (p.text || p.output)) || '').join('\n');
+      if (typeof out === 'string' && UNCERTAIN.test(out.slice(0, 2000))) { ev.uncertain = true; noteIds(ev, out); return; }
       if (typeof out === 'string') {
         try { const j = JSON.parse(out); if (j && j.metadata && typeof j.metadata.exit_code === 'number') code = j.metadata.exit_code; } catch { /* text */ }
         const m = out.match(/(?:Exit code|exit_code|exited with code)["':\s]+(\d+)/i);
@@ -297,8 +333,9 @@ function parseGemini(file) {
       const args = c.args || {};
       const base = { time: c.timestamp || m.timestamp || null, cwd: args.directory || args.dir_path || cwd, session, tool: 'gemini' };
       const resText = JSON.stringify(c.result || c.resultDisplay || '');
-      const failed = c.status === 'error' || c.status === 'cancelled' || /Exit Code: [1-9]/.test(resText);
-      if (c.name === 'run_shell_command' && typeof args.command === 'string') { const ev = { kind: 'cmd', command: args.command, id: c.id, failed, ...base }; noteIds(ev, resText); events.push(ev); }
+      const uncertain = c.status === 'cancelled' || UNCERTAIN.test(resText.slice(0, 2000));
+      const failed = !uncertain && (c.status === 'error' || /Exit Code: [1-9]/.test(resText));
+      if (c.name === 'run_shell_command' && typeof args.command === 'string') { const ev = { kind: 'cmd', command: args.command, id: c.id, failed, uncertain, background: args.is_background === true, ...base }; noteIds(ev, resText); events.push(ev); }
       else if ((c.name === 'write_file' || c.name === 'create_file') && (args.file_path || args.path)) events.push({ kind: 'write', file: args.file_path || args.path, content: String(args.content || ''), ...base });
       else if (c.name === 'replace' && args.file_path) events.push({ kind: 'write', file: args.file_path, content: String(args.new_string || ''), ...base });
       else if (/__/.test(c.name) || c.name.startsWith('mcp_')) events.push({ kind: 'mcp', tool_name: c.name.startsWith('mcp__') ? c.name : `mcp__${c.name.replace(/^mcp_/, '').replace(/^([^_]+)_/, '$1__')}`, input: args, id: c.id, failed, result: c.result || null, ...base });
@@ -307,7 +344,7 @@ function parseGemini(file) {
   if (file.endsWith('.jsonl')) eachLine(file, (o) => { if (o.$set || o.$rewindTo) return; onMsg(o); });
   else {
     let j = null;
-    try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { skipped.unreadable.push(`${file}: ${e.code || 'not JSON'}`); }
+    try { j = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch (e) { skipped.unreadable.push(`${file}: ${e.code || 'not JSON'}`); }
     if (j && j.sessionId) session = j.sessionId;
     if (j && Array.isArray(j.messages)) j.messages.forEach(onMsg);
   }
@@ -330,7 +367,7 @@ function parseCopilot(file) {
       let args = d.arguments;
       if (typeof args === 'string' && name !== 'apply_patch') { try { args = JSON.parse(args); } catch { /* raw */ } }
       let ev = null;
-      if ((name === 'bash' || name === 'powershell' || name === 'shell') && args && typeof args.command === 'string') ev = { kind: 'cmd', command: args.command, id: d.toolCallId, failed: false, ...base };
+      if ((name === 'bash' || name === 'powershell' || name === 'shell') && args && typeof args.command === 'string') ev = { kind: 'cmd', command: args.command, id: d.toolCallId, failed: false, background: args.detach === true, ...base };
       else if (name === 'create' && args && args.path) ev = { kind: 'write', file: args.path, content: String(args.file_text || ''), ...base };
       else if (name === 'edit' && args && args.path) ev = { kind: 'write', file: args.path, content: String(args.new_str || ''), ...base };
       else if (name === 'apply_patch') { for (const w of patchWrites(typeof args === 'string' ? args : (args && args.input) || '')) events.push({ kind: 'write', ...w, ...base }); return; }
@@ -346,7 +383,8 @@ function parseCopilot(file) {
       const tel = d.toolTelemetry || {};
       const code = (tel.properties && Number(tel.properties.exitCode)) || (tel.metrics && Number(tel.metrics.exitCode));
       const m = text.match(/exit(?:ed with)? code[:\s]+(\d+)/i);
-      if (d.success === false || (Number.isFinite(code) && code !== 0) || (m && Number(m[1]) !== 0)) ev.failed = true;
+      if (UNCERTAIN.test(text.slice(0, 2000))) ev.uncertain = true;
+      else if (d.success === false || (Number.isFinite(code) && code !== 0) || (m && Number(m[1]) !== 0)) ev.failed = true;
       noteIds(ev, text);
     }
   });
@@ -355,9 +393,14 @@ function parseCopilot(file) {
 
 function readEvents(files) {
   const all = [];
+  const seen = new Set();
   for (const { tool, file } of files) {
     const evs = tool === 'codex' ? parseCodex(file) : tool === 'gemini' ? parseGemini(file) : tool === 'copilot' ? parseCopilot(file) : parseClaude(file);
-    for (const e of evs) { e.logFile = file; all.push(e); }
+    for (const e of evs) {
+      // The same tool call copied into another file (orphaned/forked transcript): keep one.
+      if (e.id && e.kind !== 'write') { const k = `${e.tool}|${e.id}|${e.command || e.tool_name || ''}`; if (seen.has(k)) continue; seen.add(k); }
+      e.logFile = file; all.push(e);
+    }
   }
   all.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
   return all;

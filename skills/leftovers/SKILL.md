@@ -25,5 +25,5 @@ How to report back:
 1. Lead with what still bills by the hour (GPU VMs first), then usage-billed items, then local ones.
 2. Quote the cost estimate as an estimate.
 3. For items marked as a deploy ("may pre-exist"), say clearly that the thing may have existed before the agent and must be checked before deleting.
-4. Never run a teardown command yourself unless the user asks for that specific item. Show the command and let the user decide.
+4. Never run a teardown command yourself unless the user asks for that specific item. Show the command and let the user decide. In `--json`, show `teardown` as the command, `teardownHint` as the note beside it (what to check or run next), and `runIn` as the folder to run it from.
 5. If the user says an item is meant to stay, suggest `npx -y github:ApahSaroj/agent-leftovers --baseline` or adding a line to `~/.agent-leftovers-ignore`.

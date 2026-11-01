@@ -19,10 +19,11 @@ const EC2 = {
 const RDS = { 'db.t3.micro': 0.017, 'db.t3.small': 0.034, 'db.t3.medium': 0.068, 'db.t4g.micro': 0.016, 'db.t4g.small': 0.032, 'db.t4g.medium': 0.065, 'db.m5.large': 0.171 };
 const SQL = { 'db-f1-micro': 0.0105, 'db-g1-small': 0.035 };
 const CACHE = { 'cache.t3.micro': 0.017, 'cache.t3.small': 0.034, 'cache.t4g.micro': 0.016 };
-const AZVM = { standard_b1s: 0.0104, standard_b1ms: 0.0207, standard_b2s: 0.0416, standard_b2ms: 0.0832, standard_d2s_v3: 0.096, standard_d4s_v3: 0.192, standard_nc4as_t4_v3: 0.526 };
+const AZVM = { standard_ds1_v2: 0.073, standard_d2s_v5: 0.096, standard_b1s: 0.0104, standard_b1ms: 0.0207, standard_b2s: 0.0416, standard_b2ms: 0.0832, standard_d2s_v3: 0.096, standard_d4s_v3: 0.192, standard_nc4as_t4_v3: 0.526 };
 const FIXED = {
   'aws-nat': [0.045, 'NAT gateway hourly fee, data extra'], 'aws-eip': [0.005, 'public IPv4'], 'gcp-ip': [0.01, 'reserved static IP'],
   'aws-eks': [0.10, 'EKS control plane, nodes extra'], 'aws-eksctl': [0.10, 'EKS control plane, nodes extra'], 'gcp-gke': [0.10, 'GKE management fee, nodes extra'],
+  'aws-elbv2': [0.0225, 'load balancer hourly fee, LCUs extra'], 'aws-vpce': [0.01, 'interface endpoint, per AZ, data extra'],
   'k8s-lb-service': [0.025, 'cloud load balancer'], 'k8s-ingress': [0.025, 'cloud load balancer'], 'k8s-gateway': [0.025, 'cloud load balancer'],
 };
 
@@ -35,11 +36,31 @@ function specFrom(rule, flag, t) {
   if (rule === 'aws-rds') s.type = v(['--db-instance-class']);
   if (rule === 'gcp-sql') s.type = v(['--tier']);
   if (rule === 'aws-elasticache') { s.type = v(['--cache-node-type']); s.count = Number(v(['--num-cache-nodes']) || 1) || 1; }
-  if (rule === 'az-vm') s.type = (v(['--size']) || 'Standard_DS1_v2').toLowerCase();
-  if (rule === 'gcp-disk') { s.gb = parseInt(v(['--size']) || '500', 10); s.ssd = /ssd|balanced/.test(v(['--type']) || ''); s.defaulted = !v(['--size']); }
-  if (rule === 'aws-ebs') s.gb = parseInt(v(['--size']) || '0', 10);
+  // az vm create's default size is Standard_D2s_v5 (Azure CLI reference, --size "Default value").
+  if (rule === 'az-vm') { s.type = (v(['--size']) || 'Standard_D2s_v5').toLowerCase(); s.defaulted = !v(['--size']); }
+  if (rule === 'gcp-disk') {
+    // --size takes GB or TB ("10GB", "2TB"; no unit = GB). Default 500 GB for pd-standard, 100 GB otherwise.
+    s.diskType = (v(['--type']) || 'pd-standard').replace(/^.*\//, '');
+    s.gb = gbOf(v(['--size'])) || (s.diskType === 'pd-standard' ? 500 : 100); s.defaulted = !v(['--size']);
+  }
+  // create-volume --size is GiB; --volume-type defaults to gp2 (AWS CLI reference).
+  if (rule === 'aws-ebs') { s.gb = parseInt(v(['--size']) || '0', 10) || 0; s.volType = v(['--volume-type']) || 'gp2'; }
+  if (rule === 'aws-elbv2') s.lbType = v(['--type']) || 'application';
   return s;
 }
+
+// "2TB" -> 2048, "10GB" / "10" -> 10, "500GiB" -> 500. Unknown units -> 0 (no estimate).
+function gbOf(x) {
+  if (!x) return 0;
+  const m = String(x).trim().match(/^(\d+(?:\.\d+)?)\s*(GB|GiB|G|TB|TiB|T)?$/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  return Math.round(/^t/i.test(m[2] || '') ? n * 1024 : n);
+}
+// USD per GB-month, us-central1 (Compute Engine disk pricing): balanced $0.000136986/GiB-hour = $0.10/month.
+const GCE_DISK = { 'pd-standard': [0.04, 'standard'], 'pd-balanced': [0.10, 'balanced'], 'pd-ssd': [0.17, 'SSD'], 'pd-extreme': [0.125, 'extreme'] };
+// USD per GB-month, us-east-1 (Amazon EBS pricing).
+const EBS = { gp2: 0.10, gp3: 0.08, io1: 0.125, io2: 0.125, st1: 0.045, sc1: 0.015, standard: 0.05 };
 
 function rate(f) {
   const s = f.spec || {};
@@ -53,9 +74,14 @@ function rate(f) {
   if (f.rule === 'aws-rds' && RDS[s.type] != null) return { perHour: RDS[s.type], basis: s.type };
   if (f.rule === 'gcp-sql' && SQL[s.type] != null) return { perHour: SQL[s.type], basis: s.type };
   if (f.rule === 'aws-elasticache' && CACHE[s.type] != null) return { perHour: CACHE[s.type] * (s.count || 1), basis: s.type };
-  if (f.rule === 'az-vm' && AZVM[s.type] != null) return { perHour: AZVM[s.type], basis: s.type };
-  if (f.rule === 'gcp-disk' && s.gb > 0) return { perHour: (s.gb * (s.ssd ? 0.17 : 0.04)) / 730, basis: `${s.gb} GB ${s.ssd ? 'SSD' : 'standard'}${s.defaulted ? ' (default size)' : ''}` };
-  if (f.rule === 'aws-ebs' && s.gb > 0) return { perHour: (s.gb * 0.08) / 730, basis: `${s.gb} GB gp3` };
+  if (f.rule === 'az-vm' && AZVM[s.type] != null) return { perHour: AZVM[s.type], basis: `${s.type}${s.defaulted ? ' (az default)' : ''}` };
+  if (f.rule === 'gcp-disk' && s.gb > 0) {
+    // Older findings (or hyperdisk types) without a known diskType: no guess at a rate.
+    const d = GCE_DISK[s.diskType || (s.ssd ? 'pd-ssd' : 'pd-standard')];
+    if (!d) return null;
+    return { perHour: (s.gb * d[0]) / 730, basis: `${s.gb} GB ${d[1]}${s.defaulted ? ' (default size)' : ''}` };
+  }
+  if (f.rule === 'aws-ebs' && s.gb > 0 && EBS[s.volType || 'gp2'] != null) return { perHour: (s.gb * EBS[s.volType || 'gp2']) / 730, basis: `${s.gb} GB ${s.volType || 'gp2'}` };
   return null;
 }
 
@@ -71,4 +97,4 @@ function estimate(f, nowMs = Date.now()) {
 
 const money = (n) => (n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`);
 
-module.exports = { specFrom, estimate, money };
+module.exports = { specFrom, estimate, money, gbOf, rate };

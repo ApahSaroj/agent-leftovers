@@ -2,6 +2,7 @@
 const { short } = require('./scan');
 const { money } = require('./cost');
 const { ago } = require('./tags');
+const { sq } = require('./shell');
 
 function colors(on) {
   const w = (c) => (s) => (on ? `\x1b[${c}m${s}\x1b[0m` : String(s));
@@ -13,7 +14,7 @@ const day = (t) => (t ? String(t).slice(0, 10) : '          ');
 
 // Pad to a column; a longer value keeps every character and pushes the row instead.
 function pad(s, n) { s = String(s); return s.length >= n ? s + '  ' : s + ' '.repeat(n - s.length); }
-const rank = (r) => (r.expired ? -1 : r.gpu ? 0 : r.cost === 'hourly' ? 1 : r.cost === 'usage' ? 2 : r.cost === 'local' ? 3 : 4);
+const rank = (r) => (r.expired ? -1 : r.gpu || r.accel ? 0 : r.cost === 'hourly' ? 1 : r.cost === 'usage' ? 2 : r.cost === 'local' ? 3 : 4);
 
 function totals(list) {
   const est = list.filter((r) => r.estimate);
@@ -40,11 +41,11 @@ function text(result, opts) {
     L.push(colour(c.bold(head)));
     list.sort((a, b) => rank(a) - rank(b) || String(b.time).localeCompare(String(a.time)));
     for (const r of list) {
-      const tag = r.gpu ? 'GPU, HOURLY' : COST[r.cost] || '';
-      const costTag = r.gpu ? c.red(c.bold(pad(tag, 13))) : r.cost === 'hourly' ? c.red(pad(tag, 13)) : r.cost === 'local' ? c.cyan(pad(tag, 13)) : c.yellow(pad(tag, 13));
+      const tag = r.gpu ? 'GPU, HOURLY' : r.accel ? 'ACCEL, HOURLY' : COST[r.cost] || '';
+      const costTag = r.gpu || r.accel ? c.red(c.bold(pad(tag, 13))) : r.cost === 'hourly' ? c.red(pad(tag, 13)) : r.cost === 'local' ? c.cyan(pad(tag, 13)) : c.yellow(pad(tag, 13));
       L.push(`  ${costTag}${pad(r.provider, 11)}${c.bold(pad(r.what, 28))}${pad(short(r.name), 28)}${c.dim(day(r.time))}`);
       const via = r.via === 'mcp' ? `, via MCP: ${r.server}` : r.viaScript ? `, inside ${r.viaScript}` : '';
-      const scope = r.scope ? [r.scope.project && `project ${r.scope.project}`, r.scope.account && `account ${r.scope.account}`, r.scope.configuration && `gcloud config ${r.scope.configuration}`, r.scope.subscription && `subscription ${r.scope.subscription}`, r.scope.profile && `profile ${r.scope.profile}`, r.scope.region && `region ${r.scope.region}`].filter(Boolean).join(', ') : '';
+      const scope = r.scope ? [r.scope.project && `project ${r.scope.project}`, r.scope.account && `account ${r.scope.account}`, r.scope.configuration && `gcloud config ${r.scope.configuration}`, r.scope.subscription && `subscription ${r.scope.subscription}`, r.scope.resourceGroup && `resource group ${r.scope.resourceGroup}`, r.scope.profile && `profile ${r.scope.profile}`, r.scope.region && `region ${r.scope.region}`, r.scope.zone && `zone ${r.scope.zone}`, r.scope.cluster && `cluster ${r.scope.cluster}`, r.scope.app && `app ${r.scope.app}`].filter(Boolean).join(', ') : '';
       const live = r.live === 'exists' ? c.red('  [checked: still exists]') : r.live === 'unknown' ? c.dim(`  [could not check: ${r.liveNote}]`) : '';
       L.push(c.dim(`      where: ${short(r.cwd) || '?'}  (${r.agent}${via}${r.times > 1 ? `, created ${r.times}x` : ''}${scope ? `; ${scope}` : ''})`) + live);
       if (r.estimate) L.push(c.yellow(`      cost: ~${money(r.estimate.soFar)} so far, ~${money(r.estimate.perMonth)}/month if left on  (estimate: ${r.estimate.basis} at list price)`));
@@ -52,17 +53,23 @@ function text(result, opts) {
       if (unk) L.push(c.yellow(`      account: not recorded in the log. Confirm you are in the right one first: ${unk}`));
       if (r.deploy) L.push(c.dim('      note: a deploy often updates something that already existed. Check before you delete.'));
       if (r.stopNote) L.push(c.dim(`      note: ${r.stopNote}`));
+      if (r.uncertain) L.push(c.yellow(`      uncertain: ${r.uncertain}. Run with --verify or check the console.`));
       const tl = tagLine(r, c);
       if (tl) L.push(tl);
       if (r.note) L.push(c.yellow(`      note: ${r.note}`));
+      if (r.runIn) L.push(`      ${c.cyan('run in:')}   ${short(r.runIn)}`);
       L.push(`      ${c.cyan('turn off:')} ${r.teardown}`);
+      if (r.teardownHint) L.push(c.dim(`      hint:     ${r.teardownHint}`));
     }
     L.push('');
   };
 
   const n = left.length + spend.length;
   if (n === 0 && maybe.length === 0) {
-    L.push(c.green(c.bold(result.sweep && result.sweep.expired ? 'Nothing left running in your agent logs.' : 'Nothing left running that I can see.')));
+    if (result.filter) {
+      const k = result.filteredOut || 0;
+      L.push(c.bold(`Nothing matches the filter (${result.filter}).${k ? ` ${k} other item${k === 1 ? ' is' : 's are'} still listed without it: run again without ${/expired/.test(result.filter) ? '--expired' : ''}${/expired/.test(result.filter) && /tag/.test(result.filter) ? ' / ' : ''}${/tag/.test(result.filter) ? '--tag' : ''} to see ${k === 1 ? 'it' : 'them'}.` : ' Nothing else is left running either.'}`));
+    } else L.push(c.green(c.bold(result.sweep && result.sweep.expired ? 'Nothing left running in your agent logs.' : 'Nothing left running that I can see.')));
     L.push('');
   } else {
     show(left, `${left.length} thing${left.length === 1 ? '' : 's'} your agent created and never turned off`, c.red);
@@ -74,6 +81,7 @@ function text(result, opts) {
         L.push(`  ${c.mag(pad(s.api, 24))}${c.bold(pad(short(s.file), 50))}${c.dim(day(s.time))}`);
         L.push(c.dim(`      ${tags}  (${s.agent})`));
         L.push(`      ${c.cyan('check:')} ${s.teardown}`);
+        if (s.teardownHint) L.push(c.dim(`      hint:   ${s.teardownHint}`));
       }
       L.push('');
     }
@@ -121,6 +129,7 @@ function sweepText(sw, L, c) {
       const tl = tagLine(i, c);
       if (tl) L.push(tl);
       L.push(`      ${c.cyan('turn off:')} ${i.teardown}`);
+      if (i.teardownHint) L.push(c.dim(`      hint:     ${i.teardownHint}`));
     }
     L.push('');
   }
@@ -157,6 +166,10 @@ function scriptRaw(result) {
     L.push(`# ${r.expired ? 'EXPIRED ' : ''}${r.what}: ${r.name}  (${r.provider}, created ${day(r.time)} in ${short(r.cwd) || '?'}${r.sessionTag ? `, session ${r.sessionTag}` : ''})`);
     if (r.deploy) L.push('# NOTE: this was a deploy; the thing may have existed before the agent. Check first.');
     if (r.note) L.push(`# note: ${r.note}`);
+    if (r.uncertain) L.push(`# uncertain: ${r.uncertain}`);
+    // '## ' lines stay comments even after the leading '# ' is removed.
+    if (r.teardownHint) L.push(`## hint: ${r.teardownHint}`);
+    if (r.runIn) L.push(`# cd ${sq(r.runIn)}`);
     L.push(`# ${r.teardown}`);
     L.push('');
   }
@@ -165,12 +178,14 @@ function scriptRaw(result) {
     if (exp.length) L.push('# Found with --sweep: past their expiry tag, but NOT necessarily made by your agent. Check who owns each one first.', '');
     for (const i of exp) {
       L.push(`# EXPIRED ${i.what}: ${i.name}  (${i.provider}${i.where ? ', ' + i.where : ''}, expired ${i.expires.slice(0, 10)}, found with --sweep)`);
+      if (i.teardownHint) L.push(`## hint: ${i.teardownHint}`);
       L.push(`# ${i.teardown}`);
       L.push('');
     }
   }
   for (const s of result.spend) {
     L.push(`# ${s.api} script: ${short(s.file)}`);
+    if (s.teardownHint) L.push(`## hint: ${s.teardownHint}`);
     L.push(`# ${s.teardown}`);
     L.push('');
   }

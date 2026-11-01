@@ -1,0 +1,11 @@
+{
+ "commit-heredoc": ["git add -A && git commit -m \"$(cat <<'EOF'\nAdd infra\n\nnohup python3 worker.py &\ngcloud compute instances create cm-vm --zone us-central1-a\ndocker compose up -d\nEOF\n)\""],
+ "pr-heredoc": ["gh pr create --title x --body \"$(cat <<'EOF'\n## Test plan\n- docker run -d --name prvm redis\n- terraform apply -auto-approve\nEOF\n)\""],
+ "echo-multiline-dq": ["echo \"Next steps:\ngcloud compute instances create dq-vm --zone us-central1-a\nngrok http 3000 &\""],
+ "python-c-multiline": ["python3 -c \"\nimport os\nos.system('ls')\nprint('nohup x &')\n\""],
+ "ssh-remote": ["ssh vm1 'docker run -d --name remote redis && nohup python3 srv.py &'"],
+ "gcloud-ssh-cmd": ["gcloud compute ssh vm1 --zone us-central1-a --command 'nohup python3 train.py > t.log 2>&1 &'"],
+ "watch": ["watch -n 5 kubectl get pods &"],
+ "npm-run-amp": ["npm run dev > dev.log 2>&1 &"],
+ "redirect-amp": ["python3 -m http.server 8000 >/dev/null 2>&1 &"]
+}

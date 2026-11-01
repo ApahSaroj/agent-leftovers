@@ -48,8 +48,12 @@ A tool that tells you what to delete must not cause the next incident:
   `wrangler deploy`, `fly deploy`, `gcloud run deploy`, `cdk deploy` usually update something that
   existed before the agent. Those get a look-first command (`terraform state list`, then
   `destroy -target=`; `wrangler rollback`; `vercel ls`) and a clear note. Never a blind `destroy`.
-- **No prompt is skipped.** No `--quiet`, `--yes`, `--force` or `--skip-final-snapshot`. RDS deletes
-  keep a final snapshot. `az group create` succeeds on existing groups, so it says check first.
+- **No prompt is skipped.** No `--quiet`, `--yes` or `--skip-final-snapshot`, and `--force` only in
+  one place: `fly machine destroy <ID> --force`, because Fly refuses to destroy a running machine
+  without it (you still pick the machine ID from `fly machine list` first). Buckets are never
+  force-deleted (`aws s3 rb` without `--force`). A hint may name such a flag (`aws s3 rb --force`,
+  `--skip-final-cluster-snapshot`, `doctl ... --dangerous`) as your choice; it is never in the
+  command itself. RDS and Redshift deletes keep a final snapshot. `az group create` succeeds on existing groups, so it says check first.
 - **Commands are printed, never run.** `--script` writes every line commented out, and a name holding
   a newline or terminal escape code can't break out of the comment (control characters are stripped).
 
@@ -57,12 +61,20 @@ A tool that tells you what to delete must not cause the next incident:
 
 | Agent | Logs read |
 |---|---|
-| Claude Code | `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR`) |
-| Codex CLI | `~/.codex/sessions`, `archived_sessions` (or `$CODEX_HOME`), incl. `.jsonl.zst` on Node 22.15+ |
-| Gemini CLI | `~/.gemini/tmp/*/chats` (or `$GEMINI_CLI_HOME`) |
+| Claude Code | `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR`), also `~/.config/claude/projects`; Bash and PowerShell tool calls |
+| Codex CLI | `~/.codex/sessions`, `archived_sessions` (or `$CODEX_HOME`), incl. `.jsonl.zst` on Node 22.15+; Windows `powershell -Command` / `cmd /c` calls |
+| Gemini CLI | `~/.gemini/tmp/*/chats`, incl. subagent chats (or `$GEMINI_CLI_HOME`) |
 | GitHub Copilot CLI | `~/.copilot/session-state/*/events.jsonl` (or `$COPILOT_HOME`) |
 
-On Windows it also reads the home folders inside WSL.
+On Windows it also reads the home folders inside WSL. It also looks in Claude Desktop's agent-mode
+folder (`local-agent-mode-sessions`) when it exists; that location is taken from a third-party
+source and has not been checked on a real Desktop install.
+
+A command the agent stopped waiting for (a timeout or an interrupt) is still listed, marked
+"uncertain": the cloud operation usually carries on after the local CLI is killed. A delete that
+timed out counts only as "maybe". Background runs started through the tool itself
+(`run_in_background`, `is_background`, Copilot `detach`) are listed like `nohup` ones. The same tool
+call found in two files (a set-aside transcript, a `.jsonl` beside its `.jsonl.zst`) is counted once.
 
 ## Claude Code plugin: a heads-up at the start of every session
 
@@ -77,19 +89,43 @@ runs the full report. Runs locally with the bundled code; no npm or network need
 
 ## What it spots
 
-- **Google Cloud:** VMs, disks, static IPs, Cloud SQL, GKE, Memorystore, Vertex AI deployments, Cloud Run, Cloud Functions, buckets, App Engine, enabled APIs
-- **AWS:** EC2, EBS, Elastic IPs, NAT gateways, RDS and Aurora clusters, S3, Lambda, EKS/eksctl, ElastiCache, SageMaker endpoints, ECS, DynamoDB, CDK, SAM
-- **Azure:** resource groups, VMs, AKS, App Service, Container Apps, Postgres/MySQL
+- **Google Cloud:** VMs, disks, static IPs, Cloud SQL, GKE and its node pools, Cloud TPU VMs, Vertex AI Workbench instances and endpoint deployments, Memorystore, Cloud Run, Cloud Functions, buckets, App Engine, enabled APIs
+- **AWS:** EC2, EBS, Elastic IPs, NAT gateways, ALB/NLB, interface VPC endpoints, RDS and Aurora clusters, S3, Lambda, EKS/eksctl and eksctl node groups, ElastiCache (clusters, replication groups, serverless), OpenSearch domains and Serverless collections, Redshift clusters and Serverless workgroups, SageMaker endpoints and notebook instances, Bedrock provisioned throughput, Lightsail instances, ECS, DynamoDB, CloudFormation (`deploy`, `create-stack`), CDK, SAM
+- **Azure:** resource groups, VMs, VM scale sets, AKS and AKS node pools, App Service, Container Apps, Container Instances, Azure ML compute, Azure OpenAI / AI Services accounts and deployments, Cache for Redis, Cosmos DB, SQL servers and databases, Postgres/MySQL
+- **DigitalOcean CLI:** `doctl` Droplets, managed databases, Kubernetes clusters
 - **Cloudflare:** Workers, D1, R2, KV, Queues, Pages
 - **Kubernetes:** `Service type: LoadBalancer`, `Ingress`, `Gateway`, `PersistentVolumeClaim` from the manifests behind `kubectl apply -f` (files, folders, heredocs), `kubectl expose`, `kubectl patch`, `helm install`. Local clusters (kind, minikube, k3d, Docker Desktop) are skipped.
-- **Local:** `docker run -d`, `docker compose up -d`, `nohup` / `setsid` / trailing `&`, ngrok, cloudflared
-- **Others:** Terraform/OpenTofu, Pulumi, Serverless, Vercel, Netlify, Railway, Heroku, Supabase, Fly.io, Firebase, Modal, RunPod
+- **Local and exposure:** `docker run -d`, `podman run -d`, `docker compose up -d` and `docker-compose -f FILE up -d` (the teardown keeps `-p` and every `-f`), `nohup` / `setsid` / trailing `&`, `ssh -f` port-forward tunnels (`-R`, `-L`, `-D`), ngrok, cloudflared, `tailscale funnel`
+- **Others:** Terraform/OpenTofu, Pulumi, Serverless, SST, Vercel, Netlify, Railway, Heroku, Supabase, Fly.io, Firebase, Modal, RunPod
 - **MCP servers:** create/deploy calls on 24 cloud MCP servers (Supabase, Neon, Vercel, Cloudflare, AWS, Google Cloud, Azure, DigitalOcean, E2B, Fly.io, MongoDB Atlas and more), matched to their delete calls by resource type. A stop or pause is shown as "maybe", because disks and IPs keep billing.
 - **Scripts the agent wrote and then ran** (`bash setup.sh`): the commands inside are read too.
 - **Paid AI APIs** called from agent-written scripts: OpenAI, Anthropic, Gemini/Vertex, Mistral, OpenRouter, Replicate, ElevenLabs
 
-It also follows the account a command ran in: `gcloud config set project`, `export AWS_PROFILE`,
-`--profile`, `--region` and `--project` (even before the subcommand) end up in the teardown and in `--verify`.
+It also follows the account a command ran in: `gcloud config set project`, `gcloud config set compute/zone|compute/region`, `export AWS_PROFILE`,
+`--profile`, `--region` and `--project` (even before the subcommand) end up in the teardown and in `--verify`,
+including `sam`, `cdk` and `eksctl` teardowns. Serverless keeps `--stage`/`--region`, Terraform keeps
+`TF_WORKSPACE`. After `get-credentials` for GKE or AKS (or an EKS `--alias`), kubectl teardowns and
+`--verify` use that cluster's `--context`; when the context can't be named, the teardown first asks
+you to check `kubectl config current-context`, and `--verify` skips it.
+
+A delete only clears the same resource: same zone or region, resource group, subscription, project,
+profile, ECS cluster, Heroku app, Kubernetes context and namespace. The same name in two zones is
+shown as two rows. A delete on a failed command line, inside a failed script, from another MCP
+server, or on a `$VAR` name from another session counts only as "maybe".
+
+Names and folders from the logs are never pasted into a teardown as shell code: a name with shell
+characters becomes `<NAME>` (with a note), folders and odd flag values are single-quoted, and an odd
+Kubernetes context or namespace becomes `<CONTEXT>` / `<NAMESPACE>` rather than being dropped. A
+process lookup (`pgrep -af WORD`) only ever holds plain characters. An MCP
+deployment teardown removes only that deployment (Vercel `--safe`), never the project or site.
+
+Each teardown is one command you can paste, in bash, zsh, cmd.exe or Windows PowerShell 5.1: no
+trailing `#` comment and no `&&`. What to check or run next is printed on its own `hint:` line, and a
+folder is passed with the tool's own flag (`terraform -chdir=`, `docker compose --project-directory`,
+`pulumi --cwd`) or shown as a separate `run in:` line. Run on Windows, the commands use double quotes,
+and processes are found with `Get-CimInstance` (through `powershell -NoProfile -Command`) and stopped
+with `taskkill`. In `--json` the parts are `teardown`, `teardownHint` and `runIn`; in `--script` hints
+are `## hint:` lines, which stay comments when you remove the leading `# `.
 
 ## Options
 
@@ -102,6 +138,7 @@ It also follows the account a command ran in: `gcloud config set project`, `expo
 --script        print a teardown script, every line commented out
 --json          machine-readable output (secrets masked)
 --brief         a few lines, or nothing when all is clear (hooks, cron)
+--exit-zero     exit 0 even when leftovers are found (for hooks that only read output on 0)
 --sweep         list anything in gcloud, aws or az whose expiry tag has passed (opt-in)
 --expired       only show things whose expires / ttl tag has passed
 --tag KEY[=VAL] only show things with this tag or label, e.g. --tag session=abc123
@@ -109,7 +146,10 @@ It also follows the account a command ran in: `gcloud config set project`, `expo
 --no-ignore     don't apply the ignore file
 ```
 
-**Exit codes:** `0` nothing left running, `1` leftovers found, `2` error or bad option.
+**Exit codes:** `0` nothing left running, `1` leftovers found, `2` error or bad option. The same with
+`--brief`, `--script` and `--json`. `--exit-zero` turns `1` into `0`; the Claude Code plugin's
+SessionStart hook uses it, because Claude Code only reads a SessionStart hook's output when it exits 0.
+With `--expired` or `--tag`, an empty result says how many other items the filter hid.
 Good for a daily cron or a pre-push hook.
 
 **Meant to keep something?** Add it to `~/.agent-leftovers-ignore` (or `./.agent-leftovers-ignore`),
@@ -210,8 +250,11 @@ agent made in an account you care about.
   depends on region, discounts, free tiers and when the thing was actually stopped.
 - Cloud agents (Claude Code on the web, Codex cloud, GitHub Actions) don't leave logs on your laptop.
 - Orphan detection covers kept disks, Elastic IPs, attached volumes and Azure VM parts. Snapshots,
-  load balancers and disks left after a cluster delete, and EKS node groups are not followed yet.
+  load balancers and disks left after a cluster delete are not followed yet.
   The log rarely shows instance IDs, so an AWS terminate is matched by ID only when the output was logged.
+- Not checked against live accounts: the round-2 create/delete pairs (TPU, Workbench, Bedrock, Azure ML,
+  Azure OpenAI, ALB, OpenSearch, Redshift, Lightsail, doctl, ACI, VMSS, Redis, Cosmos, SQL, tailscale)
+  follow the official CLI references, and `--verify` has no check for them yet.
 - Always read a teardown command before running it.
 
 ## Privacy
