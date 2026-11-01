@@ -1,0 +1,14 @@
+{
+  "name": "agent-leftovers",
+  "description": "agent-leftovers: see what your AI coding agent left running in the cloud.",
+  "owner": { "name": "Saroj Kumar Nayak", "url": "https://github.com/ApahSaroj" },
+  "plugins": [
+    {
+      "name": "agent-leftovers",
+      "source": "./",
+      "description": "Session-start report of cloud resources earlier agent sessions left running, plus /agent-leftovers:leftovers. Read-only, local, zero dependencies.",
+      "category": "productivity",
+      "tags": ["cloud", "costs", "cleanup", "devops"]
+    }
+  ]
+}
