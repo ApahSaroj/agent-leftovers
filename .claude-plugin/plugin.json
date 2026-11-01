@@ -1,0 +1,10 @@
+{
+  "name": "agent-leftovers",
+  "version": "0.4.0",
+  "description": "At the start of each session, tells Claude about cloud resources, containers and background processes earlier agent sessions left running. Adds /agent-leftovers:leftovers for the full list with teardown commands. Read-only; runs locally.",
+  "author": { "name": "Saroj Kumar Nayak", "url": "https://github.com/ApahSaroj" },
+  "homepage": "https://github.com/ApahSaroj/agent-leftovers",
+  "repository": "https://github.com/ApahSaroj/agent-leftovers",
+  "license": "MIT",
+  "keywords": ["cloud-costs", "finops", "cleanup", "gcloud", "aws", "kubernetes", "mcp"]
+}
