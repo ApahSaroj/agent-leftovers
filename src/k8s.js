@@ -9,6 +9,8 @@
 const path = require('path');
 const { splitCommands, tokenize, flag, hasFlag, positional } = require('./shell');
 
+const K8S_NAME = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
+const CTX_NAME = /^[A-Za-z0-9][A-Za-z0-9._:@\/-]{0,250}$/;
 const LOCAL_CTX = /^(kind-|k3d-|minikube$|docker-desktop$|docker-for-desktop$|rancher-desktop$|orbstack$|colima|microk8s$|k3s$|default$)/;
 const LB_CHARTS = /ingress-nginx|nginx-ingress|traefik|kong|istio|gateway|haproxy|contour|emissary|ambassador|envoy|apisix/i;
 const KFLAGS = ['-n', '--namespace', '--context', '--kubeconfig', '-f', '--filename', '-o', '--output', '-l', '--selector', '--port', '--target-port', '--type', '--name', '--protocol', '-p', '--patch', '--type', '--tcp', '--cluster', '--user', '-k', '--kustomize'];
@@ -101,7 +103,7 @@ function k8sFindings(evs, addFinding, found) {
       if (t0[0] === 'cd' && t0[1]) { cwd = path.isAbsolute(t0[1]) ? t0[1] : path.join(cwd, t0[1]); continue; }
       if (ev.failed) continue;
       // Which cluster is current in this session?
-      if (t0[0] === 'kubectl' && t0[1] === 'config' && t0[2] === 'use-context' && t0[3]) { ctxBySession.set(ev.session, t0[3]); continue; }
+      if (t0[0] === 'kubectl' && t0[1] === 'config' && t0[2] === 'use-context' && t0[3]) { ctxBySession.set(ev.session, CTX_NAME.test(t0[3]) ? t0[3] : '(cloud)'); continue; }
       if (t0[0] === 'kind' && t0[1] === 'create' && t0[2] === 'cluster') { ctxBySession.set(ev.session, 'kind-' + (flag(t0, ['--name']) || 'kind')); continue; }
       if (t0[0] === 'minikube' && t0[1] === 'start') { ctxBySession.set(ev.session, 'minikube'); continue; }
       if (t0[0] === 'k3d' && t0[1] === 'cluster' && t0[2] === 'create') { ctxBySession.set(ev.session, 'k3d-' + (positional(t0, 3, ['--servers', '--agents', '-a', '-s', '--image', '-i']) || 'k3s-default')); continue; }
@@ -109,21 +111,28 @@ function k8sFindings(evs, addFinding, found) {
         ctxBySession.set(ev.session, '(cloud)'); continue;
       }
 
+      if (t0.some((x) => x === '--dry-run' || x.startsWith('--dry-run=') || x === '--help') || (t0[0] === 'helm' && (t0.includes('template') || t0[1] === 'template'))) continue;
       const isK = t0[0] === 'kubectl' || t0[0] === 'oc';
       const isH = t0[0] === 'helm';
       if (!isK && !isH) continue;
-      const ns = flag(t0, ['-n', '--namespace']);
-      const explicitCtx = isH ? flag(t0, ['--kube-context']) : flag(t0, ['--context']);
+      const ns0 = flag(t0, ['-n', '--namespace']);
+      const ns = ns0 && K8S_NAME.test(ns0) ? ns0 : null;
+      const ctx0 = isH ? flag(t0, ['--kube-context']) : flag(t0, ['--context']);
+      const explicitCtx = ctx0 && CTX_NAME.test(ctx0) ? ctx0 : null;
       const sessCtx = ctxBySession.get(ev.session);
       const ctx = explicitCtx || (sessCtx && sessCtx !== '(cloud)' ? sessCtx : null);
       const local = isLocal(explicitCtx || (sessCtx === '(cloud)' ? null : sessCtx));
       const base = { provider: 'k8s', time: ev.time, cwd: ev.cwd, session: ev.session, agent: ev.tool, status: 'left', failed: false, times: 1, ns: ns || null, ctx: ctx || null, command: simple };
 
-      const add = (noun, rule, what, cost, name, nsx) => {
+      const add = (noun, rule, what, cost, name0, nsx0) => {
         if (local) { skippedLocal++; return; }
+        // Names, namespaces and contexts end up in --verify calls: only accept what
+        // Kubernetes itself allows, so a crafted name can never become a flag.
+        const name = name0 && K8S_NAME.test(String(name0).replace(/\*$/, '')) ? name0 : null;
+        const nsx = nsx0 && K8S_NAME.test(nsx0) ? nsx0 : null;
         const n = name || '(name not in the log)';
         const nsv = nsx || ns || null;
-        addFinding(`k8s|${noun}|${nsv || 'default'}|${n}|${ctx || ''}`, {
+        addFinding(`k8s|${noun}|${nsv || 'default'}|${n}|${ctx || ''}${name ? '' : '|' + ev.time + '|' + rule}`, {
           ...base, rule, what, cost, gpu: false, name: nsv ? `${n} (ns ${nsv})` : n, k8sName: n, ns: nsv, nameUnknown: !name || /\*$/.test(n),
           teardown: teardownFor(noun, name && !/\*$/.test(name) ? name : '<NAME>', nsv, ctx),
         });

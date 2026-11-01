@@ -21,7 +21,7 @@ const PROVIDERS = [
   ['planetscale', /planetscale/i, 'https://app.planetscale.com/'],
   ['upstash', /upstash/i, 'https://console.upstash.com/'],
   ['pinecone', /pinecone/i, 'https://app.pinecone.io/'],
-  ['mongodb', /mongo|atlas/i, 'https://cloud.mongodb.com/'],
+  ['mongodb', /mongo|atlas(?!sian)/i, 'https://cloud.mongodb.com/'],
   ['turso', /turso/i, 'https://app.turso.tech/'],
   ['firebase', /firebase/i, 'https://console.firebase.google.com/'],
   ['modal', /modal/i, 'https://modal.com/apps'],
@@ -32,10 +32,12 @@ const PROVIDERS = [
 ];
 
 const CREATE = /^(create|deploy|provision|launch|spawn|start|run|new|add|restore|fork)(_|$)/;
-const DELETE = /^(delete|destroy|remove|terminate|teardown|tear_down|drop|undeploy|kill|stop|pause|shutdown)(_|$)/;
+const DELETE = /^(delete|destroy|remove|terminate|teardown|tear_down|drop|undeploy|kill)(_|$)/;
+// Stopping or pausing ends compute billing, but disks, IPs and storage keep billing.
+const STOP = /^(stop|pause|shutdown|suspend|hibernate|scale_to_zero)(_|$)|(^|_)(stop|pause|suspend)$/;
 // Some servers put the verb last: d1_database_create, r2_bucket_delete.
 const CREATE_END = /(^|_)(create|deploy|provision|launch)$/;
-const DELETE_END = /(^|_)(delete|destroy|remove|terminate|undeploy|kill|stop|pause)$/;
+const DELETE_END = /(^|_)(delete|destroy|remove|terminate|undeploy|kill)$/;
 
 // noun -> label, cost. First match wins.
 const NOUNS = [
@@ -59,7 +61,7 @@ const NOUNS = [
   [/service|(^|_)apps?($|_)/, 'service', 'usage'],
 ];
 // Things that never bill on their own, even on a cloud server.
-const IGNORE = /issue|pull_request|(^|_)pr($|_)|comment|file|page|doc|table|row|record|memory|note|task|message|label|secret|env|variable|dns|migration|query|log|policy|user|token|(^|_)keys?($|_)|webhook|schema|column|extension|team|member|invite|alert|monitor|tag/;
+const IGNORE = /issue|pull_request|comment|document|record|note|message|label|secret|variable|migration|query|policy|token|webhook|schema|column|extension|member|invite|alert|monitor|(^|_)pr($|_)|(^|_)files?($|_)|(^|_)pages?($|_)|(^|_)docs?($|_)|(^|_)tables?($|_)|(^|_)rows?($|_)|(^|_)memory($|_)|(^|_)memories($|_)|(^|_)tasks?($|_)|(^|_)env($|_)|(^|_)dns($|_)|(^|_)logs?($|_)|(^|_)users?($|_)|(^|_)keys?($|_)|(^|_)tags?($|_)|(^|_)team($|_)|(^|_)teams($|_)/;
 
 function splitName(full) {
   const s = String(full || '');
@@ -84,8 +86,11 @@ function classify(server, tool) {
   const t = norm(tool);
   const isCreate = CREATE.test(t) || CREATE_END.test(t);
   const isDelete = !isCreate && (DELETE.test(t) || DELETE_END.test(t));
-  if (!isCreate && !isDelete) return null;
-  let rest = t.replace(CREATE, '').replace(DELETE, '').replace(CREATE_END, '').replace(DELETE_END, '');
+  const isStop = !isCreate && !isDelete && STOP.test(t);
+  if (!isCreate && !isDelete && !isStop) return null;
+  let rest = t.replace(CREATE, '').replace(DELETE, '').replace(STOP, '').replace(CREATE_END, '').replace(DELETE_END, '');
+  // ECS run_task starts containers that bill until they stop.
+  if (p && p.id === 'aws' && /(^|_)tasks?($|_)/.test(rest) && /ecs|fargate|(^|_)run/.test(server + '_' + t)) return { kind: isCreate ? 'create' : isStop ? 'stop' : 'delete', provider: 'aws', url: p.url, noun: 'ECS task', cost: 'hourly' };
   if (IGNORE.test(rest)) return null;
   let noun = NOUNS.find(([re]) => re.test(rest));
   // A bare "deploy" tool (vercel deploy, deploy_to_vercel) is a deployment.
@@ -94,7 +99,7 @@ function classify(server, tool) {
   // Unknown servers count only for things that clearly bill by the hour,
   // and never for "project" (on GitHub, Linear or Jira that is just a board).
   if (!p && (noun[2] !== 'hourly' || noun[1] === 'project')) return null;
-  return { kind: isCreate ? 'create' : 'delete', provider: p ? p.id : server, url: p ? p.url : null, noun: noun[1], cost: noun[2] };
+  return { kind: isCreate ? 'create' : isStop ? 'stop' : 'delete', provider: p ? p.id : server, url: p ? p.url : null, noun: noun[1], cost: noun[2] };
 }
 
 const NAME_KEYS = ['name', 'project_name', 'projectName', 'database_name', 'databaseName', 'branch_name', 'branchName', 'app_name', 'appName',
@@ -146,17 +151,17 @@ function resultText(content) {
 const TEARDOWN = {
   supabase: { project: (n) => `supabase projects delete ${n}`, function: (n, i) => `supabase functions delete ${n}${i.project_id ? ` --project-ref ${i.project_id}` : ''}`, branch: (n) => `supabase branches delete ${n}` },
   neon: { project: (n) => `neonctl projects delete ${n}`, branch: (n) => `neonctl branches delete ${n} --project-id <PROJECT_ID>`, database: (n) => `neonctl databases delete ${n} --project-id <PROJECT_ID>` },
-  vercel: { deployment: (n) => `vercel remove ${n} --yes`, project: (n) => `vercel project rm ${n}` },
+  vercel: { deployment: (n) => `vercel remove ${n}`, project: (n) => `vercel project rm ${n}` },
   cloudflare: { worker: (n) => `wrangler delete --name ${n}`, database: (n) => `wrangler d1 delete ${n}`, bucket: (n) => `wrangler r2 bucket delete ${n}`, 'KV namespace': (n) => `wrangler kv namespace delete --namespace-id ${n}`, queue: (n) => `wrangler queues delete ${n}` },
   netlify: { deployment: (n) => `netlify sites:delete ${n}`, project: (n) => `netlify sites:delete ${n}` },
-  fly: { service: (n) => `fly apps destroy ${n} --yes`, instance: (n) => `fly machine destroy ${n} --force`, volume: (n) => `fly volumes destroy ${n} --yes` },
-  digitalocean: { instance: (n) => `doctl compute droplet delete ${n} --force`, database: (n) => `doctl databases delete ${n} --force`, cluster: (n) => `doctl kubernetes cluster delete ${n} --force` },
-  heroku: { service: (n) => `heroku apps:destroy ${n} --confirm ${n}` },
-  mongodb: { cluster: (n) => `atlas clusters delete ${n} --force` },
-  turso: { database: (n) => `turso db destroy ${n} --yes` },
+  fly: { service: (n) => `fly apps destroy ${n}`, instance: (n) => `fly machine destroy ${n}`, volume: (n) => `fly volumes destroy ${n}` },
+  digitalocean: { instance: (n) => `doctl compute droplet delete ${n}`, database: (n) => `doctl databases delete ${n}`, cluster: (n) => `doctl kubernetes cluster delete ${n}` },
+  heroku: { service: (n) => `heroku apps:destroy ${n}` },
+  mongodb: { cluster: (n) => `atlas clusters delete ${n}` },
+  turso: { database: (n) => `turso db destroy ${n}` },
   e2b: { sandbox: (n) => `e2b sandbox kill ${n}` },
-  gcloud: { instance: (n) => `gcloud compute instances delete ${n} --zone <ZONE> --quiet`, bucket: (n) => `gcloud storage rm -r gs://${n}` },
-  aws: { instance: (n) => `aws ec2 terminate-instances --instance-ids ${n}`, bucket: (n) => `aws s3 rb s3://${n} --force`, function: (n) => `aws lambda delete-function --function-name ${n}` },
+  gcloud: { instance: (n) => `gcloud compute instances delete ${n} --zone <ZONE>`, bucket: (n) => `gcloud storage buckets delete gs://${n}` },
+  aws: { instance: (n) => `aws ec2 terminate-instances --instance-ids ${n}`, bucket: (n) => `aws s3 rb s3://${n}`, function: (n) => `aws lambda delete-function --function-name ${n}` },
 };
 
 // CLIs that delete by name rather than by id.

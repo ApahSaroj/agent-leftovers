@@ -5,7 +5,7 @@ module.exports = [
   ['mcp__supabase__create_project', 'create', 'project'],
   ['mcp__supabase__deploy_edge_function', 'create', 'function'],
   ['mcp__supabase__create_branch', 'create', 'branch'],
-  ['mcp__supabase__pause_project', 'delete', 'project'],
+  ['mcp__supabase__pause_project', 'stop', 'project'],
   ['mcp__supabase__apply_migration', null],
   ['mcp__supabase__execute_sql', null],
   ['mcp__supabase__list_projects', null],

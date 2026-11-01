@@ -1,7 +1,7 @@
 {
   "name": "agent-leftovers",
-  "version": "0.3.0",
-  "description": "See every cloud resource your AI coding agent spun up, through the shell, kubectl/helm or MCP, and the command to turn each off. Reads Claude Code and Codex logs locally. Optional read-only --verify.",
+  "version": "0.4.0",
+  "description": "See every cloud resource, container and background process your AI coding agent left running, with the command to turn each off, including disks and IPs left after a delete and anything past its expiry tag. Reads Claude Code, Codex, Gemini CLI and Copilot CLI logs locally. Optional read-only --verify.",
   "bin": {
     "agent-leftovers": "bin/agent-leftovers.js"
   },
@@ -9,11 +9,15 @@
     "bin",
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "scripts": {
     "test": "node test/run.js",
-    "test:stress": "node test/stress.js"
+    "test:stress": "node test/stress.js",
+    "test:smoke": "node test/smoke.js",
+    "prepublishOnly": "node test/run.js"
   },
   "keywords": [
     "claude-code",
@@ -31,7 +35,13 @@
     "neon",
     "kubernetes",
     "kubectl",
-    "helm"
+    "helm",
+    "gemini-cli",
+    "copilot",
+    "docker",
+    "terraform",
+    "claude-code-plugin",
+    "cost-estimate"
   ],
   "engines": {
     "node": ">=18"
@@ -41,5 +51,9 @@
     "type": "git",
     "url": "git+https://github.com/ApahSaroj/agent-leftovers.git"
   },
-  "homepage": "https://github.com/ApahSaroj/agent-leftovers#readme"
+  "homepage": "https://github.com/ApahSaroj/agent-leftovers#readme",
+  "bugs": {
+    "url": "https://github.com/ApahSaroj/agent-leftovers/issues"
+  },
+  "author": "Saroj Kumar Nayak (https://github.com/ApahSaroj)"
 }

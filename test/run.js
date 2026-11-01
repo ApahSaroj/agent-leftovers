@@ -35,7 +35,7 @@ console.log('detection');
 t('finds the GPU VM with zone in teardown', () => {
   const r = by('gcp-vm', 'llm-worker-1');
   assert.ok(r && r.status === 'left');
-  assert.strictEqual(r.teardown, 'gcloud compute instances delete llm-worker-1 --zone us-central1-a --quiet');
+  assert.strictEqual(r.teardown, 'gcloud compute instances delete llm-worker-1 --zone us-central1-a');
 });
 t('finds the 250 GB disk (--zone=)', () => assert.ok(by('gcp-disk', 'scratch-250').teardown.includes('--zone us-central1-a')));
 t('gcloud beta run deploy after cd', () => assert.ok(by('gcp-run', 'pdf-api').teardown.includes('--region us-central1')));
@@ -46,7 +46,7 @@ t('$RANDOM name flagged as unknown with <NAME>', () => { const r = j.resources.f
 t('codex: d1 via npx', () => assert.strictEqual(by('cf-d1', 'site-db').teardown, 'wrangler d1 delete site-db'));
 t('codex: r2 created then deleted = cleaned', () => assert.strictEqual(by('cf-r2', 'site-assets').status, 'cleaned'));
 t('codex: worker deploy via npx wrangler@latest', () => assert.ok(by('cf-worker')));
-t('codex: fly app named', () => assert.strictEqual(by('fly-app', 'site-preview').teardown, 'fly apps destroy site-preview --yes'));
+t('codex: fly app named', () => assert.strictEqual(by('fly-app', 'site-preview').teardown, 'fly apps destroy site-preview'));
 t('codex exec_command style parsed', () => assert.ok(by('supabase-fn', 'notify')));
 t('codex: non-zero exit = failed', () => assert.strictEqual(by('aws-rds', 'site-pg').status, 'failed'));
 t('ec2 named from tag spec', () => assert.strictEqual(by('aws-ec2').name, 'load-tester'));
@@ -54,7 +54,7 @@ t('ssh / echo noise ignored', () => assert.ok(!j.resources.some((r) => /ssh|echo
 
 console.log('paid AI spend');
 const py = j.spend.find((s) => s.file.endsWith('batch_summarize.py'));
-t('python OpenAI loop script, run in background', () => { assert.ok(py); assert.strictEqual(py.api, 'OpenAI'); assert.ok(py.loop && py.background); assert.ok(py.teardown.startsWith('pkill -f "batch_summarize.py"')); });
+t('python OpenAI loop script, run in background', () => { assert.ok(py); assert.strictEqual(py.api, 'OpenAI'); assert.ok(py.loop && py.background); assert.ok(/batch_summarize\.py/.test(py.teardown) && !/pkill/.test(py.teardown)); });
 const js = j.spend.find((s) => s.file.endsWith('gen-alt-text.js'));
 t('codex apply_patch Anthropic script detected', () => { assert.ok(js); assert.strictEqual(js.api, 'Anthropic'); assert.ok(js.loop); });
 t('curl loop to OpenAI detected', () => assert.ok(j.spend.find((s) => s.file === '(shell loop)')));
@@ -69,7 +69,7 @@ t('--script lines all commented', () => assert.ok(sc.split('\n').filter((l) => l
 t('--project filter', () => { const k = JSON.parse(run(['--json', '--project', 'site']).stdout); assert.ok(k.resources.every((r) => r.agent === 'codex')); });
 t('--logs path works', () => { const k = JSON.parse(run(['--json', '--logs', path.join(home, '.codex')]).stdout); assert.ok(k.resources.length > 0 && k.resources.every((r) => r.agent === 'codex')); });
 const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'al-empty-'));
-t('friendly message when no logs', () => { const r = spawnSync(process.execPath, [bin], { env: { ...env, HOME: empty, USERPROFILE: empty }, encoding: 'utf8' }); assert.strictEqual(r.status, 2); assert.ok(/no Claude Code or Codex session logs/.test(r.stderr)); });
+t('friendly message when no logs', () => { const r = spawnSync(process.execPath, [bin], { env: { ...env, HOME: empty, USERPROFILE: empty }, encoding: 'utf8' }); assert.strictEqual(r.status, 2); assert.ok(/no agent session logs/.test(r.stderr)); });
 
 console.log('codex variants');
 const zh = fs.mkdtempSync(path.join(os.tmpdir(), 'al-zst-'));
@@ -187,6 +187,8 @@ t('odd characters in a name are never run', () => {
 });
 
 require('./k8s-test')(t, bin, env);
+require('./v04-test')(t, bin, env);
+require('./tags-test')(t, bin, env);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'} ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);
